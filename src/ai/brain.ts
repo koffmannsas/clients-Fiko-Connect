@@ -35,6 +35,15 @@ export class FikoBrain {
         }
     }
 
+    async generateGeneric(companyId: string, leadId: string, prompt: string, context: string = "Assistant Stratégique FiKO") {
+        try {
+            return await orchestrator.generateResponse(companyId, leadId, prompt, context);
+        } catch (error: any) {
+            console.error(`[FikoBrain] Generic prompt failed: ${error.message}`);
+            return "ERROR_AI_FAILURE";
+        }
+    }
+
     async getStatus() {
         const fullStatus = await orchestrator.getFullStatus();
         return {
@@ -53,7 +62,6 @@ export class FikoBrain {
     }
 
     getProvidersStatus() {
-        // Simplified for UI
         return {
             gemini: true,
             openai: true,

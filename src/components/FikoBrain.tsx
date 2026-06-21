@@ -1,18 +1,17 @@
 import { useState } from 'react';
 import {
   Bot,
-  MessageSquare,
   TrendingUp,
   Target,
   Zap,
   Sparkles,
   Send,
   BrainCircuit,
-  BarChart3,
-  Users,
   AlertCircle,
-  HelpCircle
+  HelpCircle,
+  Loader2
 } from 'lucide-react';
+import { AiOmegaService } from '../services/ai-omega.service';
 
 interface BrainLog {
   id: string;
@@ -21,35 +20,37 @@ interface BrainLog {
   timestamp: string;
 }
 
-export default function FikoBrainModule() {
+export default function FikoBrainModule({ onboardingData }: { onboardingData: any }) {
   const [logs, setLogs] = useState<BrainLog[]>([
     { id: '1', role: 'ai', content: "Bonjour CEO. Je suis FiKO Brain. Je peux analyser vos conversations, vos campagnes et vos ventes pour vous aider à piloter votre empire. Que voulez-vous savoir aujourd'hui ?", timestamp: 'Maintenant' }
   ]);
   const [input, setTypedInput] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const companyId = onboardingData?.companyId || 'fiko_prod_68469';
 
-  const handleQuery = () => {
-    if (!input.trim()) return;
+  const handleQuery = async () => {
+    if (!input.trim() || isAnalyzing) return;
     const userMsg: BrainLog = { id: Date.now().toString(), role: 'user', content: input, timestamp: 'Maintenant' };
     setLogs(prev => [...prev, userMsg]);
+    const currentInput = input;
     setTypedInput('');
     setIsAnalyzing(true);
 
-    setTimeout(() => {
-      let aiContent = "D'après mon analyse, vos ventes ont augmenté de 12% cette semaine. Le segment E-commerce à Abidjan est le plus performant. Je vous recommande de relancer les 7 prospects 'Chauds' détectés dans votre pipeline.";
-      if (input.toLowerCase().includes('pourquoi')) {
-        aiContent = "Vos ventes ont légèrement baissé mardi car le temps de réponse moyen est monté à 14 minutes. FiKO a repris la main mercredi et a ramené ce temps à 2.4 secondes, ce qui a boosté les conversions de 4.2%.";
-      }
-      const aiMsg: BrainLog = { id: (Date.now()+1).toString(), role: 'ai', content: aiContent, timestamp: 'Maintenant' };
-      setLogs(prev => [...prev, aiMsg]);
-      setIsAnalyzing(false);
-    }, 2000);
+    const context = {
+        market: "West Africa",
+        company: onboardingData?.companyName || "Mon Entreprise",
+        active_leads: 127,
+        conversion_rate: "19.8%"
+    };
+
+    const aiContent = await AiOmegaService.queryBrain(companyId, currentInput, context);
+    const aiMsg: BrainLog = { id: (Date.now()+1).toString(), role: 'ai', content: aiContent, timestamp: 'Maintenant' };
+    setLogs(prev => [...prev, aiMsg]);
+    setIsAnalyzing(false);
   };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
-
-      {/* FIKO BRAIN HEADER */}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
@@ -63,8 +64,6 @@ export default function FikoBrainModule() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-280px)]">
-
-        {/* CHAT INTERFACE */}
         <div className="lg:col-span-2 bg-[#0a0a0a] border border-gray-900 rounded-3xl flex flex-col overflow-hidden shadow-2xl">
           <div className="p-4 border-b border-gray-900 bg-black/40 flex items-center gap-3">
             <div className="w-8 h-8 rounded-xl bg-purple-500/20 flex items-center justify-center text-purple-400 border border-purple-500/30">
@@ -89,11 +88,7 @@ export default function FikoBrainModule() {
             {isAnalyzing && (
               <div className="flex justify-start">
                 <div className="bg-zinc-950 border border-zinc-900 p-4 rounded-2xl flex items-center gap-3">
-                  <div className="flex gap-1">
-                    <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-bounce"></span>
-                    <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-bounce delay-75"></span>
-                    <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-bounce delay-150"></span>
-                  </div>
+                  <Loader2 className="animate-spin text-purple-400" size={16} />
                   <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Analyse des données en cours...</span>
                 </div>
               </div>
@@ -109,15 +104,14 @@ export default function FikoBrainModule() {
                 placeholder="Posez une question stratégique..."
                 className="flex-1 p-3 bg-transparent text-white text-xs focus:outline-none"
               />
-              <button onClick={handleQuery} className="bg-purple-600 text-white p-3 rounded-xl font-bold hover:bg-purple-700 transition active:scale-95">
+              <button onClick={handleQuery} disabled={isAnalyzing} className="bg-purple-600 text-white p-3 rounded-xl font-bold hover:bg-purple-700 transition active:scale-95 disabled:opacity-50">
                 <Send size={16}/>
               </button>
             </div>
           </div>
         </div>
 
-        {/* INSIGHTS SUMMARY */}
-        <div className="space-y-6">
+        <div className="space-y-6 overflow-y-auto scrollbar-hide">
           <div className="bg-[#0a0a0f] border border-gray-900 rounded-3xl p-6 space-y-6 shadow-xl">
             <div className="flex items-center gap-2 border-b border-gray-950 pb-4">
               <Target className="text-emerald-400" size={18} />
@@ -141,15 +135,6 @@ export default function FikoBrainModule() {
                 </div>
               ))}
             </div>
-
-            <div className="bg-black/60 border border-zinc-900 p-4 rounded-2xl space-y-3">
-              <div className="flex items-center gap-2 text-[10px] text-amber-400 font-black uppercase tracking-widest">
-                <AlertCircle size={14} /> Attention Requise
-              </div>
-              <p className="text-[11px] text-gray-400 leading-relaxed font-medium">
-                Le taux de réponse à Abidjan a chuté de <strong className="text-red-400">2.1%</strong> hier soir entre 18h et 20h. Pensez à augmenter le budget de relance pour ce soir.
-              </p>
-            </div>
           </div>
 
           <div className="bg-[#0a0a0f] border border-gray-900 rounded-3xl p-6 shadow-xl relative overflow-hidden">
@@ -160,8 +145,9 @@ export default function FikoBrainModule() {
             </div>
             <div className="space-y-2">
               {[
+                "Quels sont mes meilleurs prospects ?",
                 "Pourquoi mes ventes baissent ?",
-                "Quels prospects dois-je appeler ?",
+                "Quels leads appeler aujourd'hui ?",
                 "Quelle campagne lancer ce week-end ?",
                 "Analyser le sentiment à Dakar"
               ].map((q) => (
@@ -176,9 +162,7 @@ export default function FikoBrainModule() {
             </div>
           </div>
         </div>
-
       </div>
-
     </div>
   );
 }

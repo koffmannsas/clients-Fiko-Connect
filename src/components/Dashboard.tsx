@@ -15,10 +15,12 @@ import {
   Sun,
   ShieldCheck,
   CheckCircle2,
-  Sparkles
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { collection, query, where, onSnapshot, limit, orderBy } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { AnalyticsService } from '../services/analytics.service';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const graphData = [
@@ -33,7 +35,7 @@ const graphData = [
 
 interface StatCardProps {
   title: string;
-  value: string;
+  value: string | number;
   trend: string;
   isUp: boolean;
   icon: any;
@@ -61,6 +63,8 @@ const StatCard = ({ title, value, trend, isUp, icon: Icon, color }: StatCardProp
 
 export default function Dashboard({ onboardingData }: { onboardingData: any }) {
   const [leads, setLeads] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const companyId = onboardingData?.companyId || 'fiko_prod_68469';
 
   useEffect(() => {
@@ -73,6 +77,14 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setLeads(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
+
+    const fetchStats = async () => {
+        const s = await AnalyticsService.getExecutiveStats(companyId);
+        setStats(s);
+        setLoading(false);
+    };
+    fetchStats();
+
     return unsubscribe;
   }, [companyId]);
 
@@ -80,55 +92,57 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
   const warmLeads = leads.filter(l => (l.score || 0) >= 40 && (l.score || 0) < 80);
   const coldLeads = leads.filter(l => (l.score || 0) < 40);
 
+  if (loading) return <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-[#E10600]" size={32} /></div>;
+
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
       
-      {/* VUE CEO - EXECUTIVE KPI GRID */}
+      {/* VUE CEO - REAL DATA KPI GRID */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard
           title="CA GÉNÉRÉ (XOF)"
-          value="3 250 000"
-          trend="+14.2%"
+          value="Calcul en cours"
+          trend="+0%"
           isUp={true}
           icon={TrendingUp}
           color="emerald"
         />
         <StatCard
           title="LEADS ENTRANTS"
-          value="127"
-          trend="+37"
+          value={stats?.totalLeads || 0}
+          trend="Live"
           isUp={true}
           icon={Users}
           color="blue"
         />
         <StatCard
           title="CONV. ACTIVES"
-          value="42"
-          trend="-2"
-          isUp={false}
+          value={stats?.activeConversations || 0}
+          trend="WhatsApp"
+          isUp={true}
           icon={MessageCircle}
           color="purple"
         />
         <StatCard
           title="TAUX DE CONV."
-          value="19.8%"
-          trend="+4.1%"
+          value={stats?.conversionRate || '0%'}
+          trend="Objectif 20%"
           isUp={true}
           icon={Target}
           color="fiko-red"
         />
         <StatCard
-          title="OPPORTUNITÉS"
-          value="24"
-          trend="+8"
+          title="MESSAGES IA"
+          value={stats?.totalMessages || 0}
+          trend="Sémantique"
           isUp={true}
           icon={Zap}
           color="amber"
         />
         <StatCard
           title="CAMPAGNES"
-          value="3"
-          trend="Live"
+          value="0"
+          trend="Module Beta"
           isUp={true}
           icon={Megaphone}
           color="blue"
@@ -142,10 +156,9 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="text-white text-sm font-black uppercase tracking-widest flex items-center gap-2">
-                <Activity size={16} className="text-[#E10600]" /> Croissance des Revenus Fiko Pay
+                <Activity size={16} className="text-[#E10600]" /> Croissance de l'Activité
               </h3>
             </div>
-            <span className="text-[10px] bg-zinc-900 border border-zinc-800 text-gray-400 px-3 py-1 rounded-full font-black uppercase">7 Derniers Jours</span>
           </div>
           <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
@@ -158,7 +171,7 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#161616" vertical={false} />
                 <XAxis dataKey="name" stroke="#444" fontSize={10} axisLine={false} tickLine={false} />
-                <YAxis stroke="#444" fontSize={10} axisLine={false} tickLine={false} tickFormatter={(v) => `${v/1000}k`} />
+                <YAxis stroke="#444" fontSize={10} axisLine={false} tickLine={false} />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#050505', border: '1px solid #1f2937', borderRadius: '12px' }}
                   itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
@@ -229,80 +242,8 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
               </div>
             </div>
           </div>
-
-          <button className="mt-6 w-full bg-[#E10600] text-white py-3.5 rounded-xl font-black text-xs uppercase tracking-wider hover:bg-red-700 transition active:scale-95 shadow-lg shadow-red-950/20">
-            Lancer les relances IA 🚀
-          </button>
         </div>
       </div>
-
-      {/* TOP LEADS BY FIKO AI SCORE */}
-      <div className="bg-[#0a0a0a] border border-gray-900 rounded-3xl overflow-hidden shadow-xl">
-        <div className="p-6 border-b border-gray-900 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-purple-500/10 text-purple-500 border border-purple-500/20">
-              <Sparkles size={18} />
-            </div>
-            <h3 className="text-white text-sm font-black uppercase tracking-widest">Classement FiKO AI Score™</h3>
-          </div>
-          <button className="text-[10px] text-[#E10600] font-black uppercase tracking-widest hover:underline">Voir tout le CRM</button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-black/50 text-gray-500 text-[9px] font-black uppercase tracking-widest">
-              <tr>
-                <th className="px-6 py-4">Prospect</th>
-                <th className="px-6 py-4">Score IA</th>
-                <th className="px-6 py-4">Intention détectée</th>
-                <th className="px-6 py-4">Dernier message</th>
-                <th className="px-6 py-4 text-right">Meilleure Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-900">
-              {leads.map((lead) => (
-                <tr key={lead.id} className="hover:bg-zinc-900/30 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-[10px] font-black text-[#E10600] uppercase">
-                        {(lead.name || lead.phone)[0]}
-                      </div>
-                      <div>
-                        <p className="text-xs font-bold text-white leading-none mb-1">{lead.name || 'Prospect Inconnu'}</p>
-                        <p className="text-[10px] text-gray-500 font-mono leading-none">{lead.phone}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 bg-zinc-950 h-1.5 w-16 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full transition-all duration-1000 ${lead.score >= 80 ? 'bg-emerald-500' : lead.score >= 40 ? 'bg-amber-500' : 'bg-red-500'}`}
-                          style={{ width: `${lead.score || 50}%` }}
-                        ></div>
-                      </div>
-                      <span className="text-[11px] font-black text-white font-mono">{lead.score || 50}%</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="bg-zinc-900 border border-zinc-800 text-zinc-300 text-[9px] font-black px-2 py-1 rounded uppercase tracking-wider">
-                      {lead.score >= 80 ? 'Paiement Wave' : lead.score >= 40 ? 'Demande Tarifs' : 'Prise de contact'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-[11px] text-gray-400 truncate max-w-[200px] italic">"{lead.lastMessage || 'Aucun message'}"</p>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <button className="bg-zinc-900 border border-zinc-800 text-white px-3 py-1.5 rounded-lg text-[9px] font-black uppercase hover:bg-[#E10600] hover:border-transparent transition-all active:scale-95">
-                      Closer maintenant ⚡
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
     </div>
   );
 }

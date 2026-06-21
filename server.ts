@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { brain } from "./src/ai/brain";
 import crypto from "crypto";
 
@@ -88,6 +88,79 @@ app.get("/providers/debug", async (req, res) => {
     res.json(debug);
 });
 
+// --- OMEGA AI PROXY ROUTES ---
+app.post("/api/ai/generic", express.json(), async (req, res) => {
+    try {
+        const { companyId, leadId, prompt, context } = req.body;
+        const response = await brain.generateGeneric(companyId, leadId, prompt, context);
+        res.json({ response });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// --- INDUSTRIAL AUTH & TRIAL ROUTES (PHASE 1-4) ---
+app.post("/api/auth/send-otp", express.json(), async (req, res) => {
+    const { phoneNumber } = req.body;
+    if (!phoneNumber) return res.status(400).json({ error: "Missing phone number" });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const sessionId = crypto.randomUUID();
+
+    try {
+        await db.collection('otp_sessions').doc(phoneNumber).set({
+            otp,
+            sessionId,
+            attempts: 0,
+            expiresAt: Timestamp.fromMillis(Date.now() + 5 * 60 * 1000)
+        });
+
+        console.log(`[AUTH] OTP for ${phoneNumber}: ${otp}`);
+        // Real logic would send WhatsApp message here
+        res.json({ success: true, sessionId });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post("/api/auth/verify-otp", express.json(), async (req, res) => {
+    const { phoneNumber, otp } = req.body;
+    const docRef = db.collection('otp_sessions').doc(phoneNumber);
+    const snap = await docRef.get();
+
+    if (!snap.exists) return res.status(404).json({ error: "No session found" });
+    const data = snap.data();
+
+    if (data?.otp === otp) {
+        // Success: Create or Login User/Org
+        const companyId = `fiko_org_${phoneNumber.replace(/[^0-9]/g, '')}`;
+
+        // Initial setup for 7-day trial
+        await db.collection('companies').doc(companyId).set({
+            id: companyId,
+            whatsappNumber: phoneNumber,
+            createdAt: FieldValue, Timestamp.serverTimestamp(),
+            status: 'active'
+        }, { merge: true });
+
+        await db.collection('subscriptions').doc(companyId).set({
+            plan: 'starter',
+            trialActive: true,
+            trialStartedAt: FieldValue, Timestamp.serverTimestamp(),
+            trialExpiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            messagesSent: 0,
+            aiMessagesSent: 0,
+            maxMessages: 1000
+        }, { merge: true });
+
+        await docRef.delete();
+        res.json({ success: true, companyId });
+    } else {
+        await docRef.update({ attempts: FieldValue, Timestamp.increment(1) });
+        res.status(401).json({ error: "Invalid OTP" });
+    }
+});
+
 const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || "";
 
 // --- SECURITY: Webhook Signature Verification ---
@@ -111,7 +184,7 @@ async function isDuplicate(messageId: string) {
     const docRef = db.collection('processed_messages').doc(messageId);
     try {
         await docRef.create({
-            processedAt: FieldValue.serverTimestamp(),
+            processedAt: FieldValue, Timestamp.serverTimestamp(),
             messageId: messageId
         });
         console.log(`[CORE] Message ${messageId} locked for processing.`);
@@ -128,7 +201,7 @@ async function isDuplicate(messageId: string) {
 
 // --- AI: Fiko Closer with Memory ---
 async function processWithAI(companyId: string, leadId: string, message: string) {
-    console.log(`[AI] Starting generation for Lead: ${leadId}`);
+    console.log(JSON.stringify({ level: "INFO", category: "AI", message: "Starting generation", leadId, timestamp: new Date().toISOString() })); // console.log(`[AI] Starting generation for Lead: ${leadId}`);
 
     // 1. Context Retrieval
     let businessContext = "Expert en vente WhatsApp.";
@@ -161,7 +234,7 @@ async function processWithAI(companyId: string, leadId: string, message: string)
             conversationId: leadId,
             sender: 'ai',
             content: responseText,
-            timestamp: FieldValue.serverTimestamp()
+            timestamp: FieldValue, Timestamp.serverTimestamp()
         });
     }
     console.log(`[DATA] AI response persisted.`);
@@ -188,7 +261,7 @@ async function syncLead(companyId: string, from: string, text: string) {
             companyId,
             phone: from,
             lastMessage: text,
-            updatedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue, Timestamp.serverTimestamp(),
             status: 'Nouveau'
         }, { merge: true });
     }
@@ -291,7 +364,7 @@ app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res)
                 console.warn(`[QUOTA] Limit reached for ${companyId}`);
                 return res.sendStatus(403);
             }
-            await subRef.update({ messagesSent: FieldValue.increment(1) });
+            await subRef.update({ messagesSent: FieldValue, Timestamp.increment(1) });
         }
     }
 
@@ -305,7 +378,7 @@ app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res)
             conversationId: leadId,
             sender: 'client',
             content: text,
-            timestamp: FieldValue.serverTimestamp()
+            timestamp: FieldValue, Timestamp.serverTimestamp()
         });
     }
     console.log(`[DATA] Saved message to lead ${leadId}`);
@@ -319,18 +392,6 @@ app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res)
         .catch(err => console.error("[FATAL] AI/WhatsApp workflow failed:", err));
 
     res.sendStatus(200);
-});
-
-// --- API: Campaign Routes ---
-app.post("/api/campaigns/generate", express.json(), async (req, res) => {
-    try {
-        const { objective, audience, tone } = req.body;
-        // Temporary direct call until brain supports specialized prompt types
-        const response = "[]";
-        res.json(JSON.parse(response));
-    } catch (e: any) {
-        res.status(500).json({ error: e.message });
-    }
 });
 
 // --- PRODUCTION SERVING ---

@@ -17,7 +17,7 @@ import {
   Bot, 
   CreditCard, 
   BarChart3, 
-  Settings, 
+  Settings, ShieldCheck,
   Power, 
   User, 
   Megaphone, 
@@ -38,6 +38,7 @@ const LeadsModule = lazy(() => import('./components/Leads'));
 const CampaignsModule = lazy(() => import('./components/Campaigns'));
 const ConversationsModule = lazy(() => import('./components/Conversations'));
 const FikoBrainModule = lazy(() => import('./components/FikoBrain'));
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
 const AfricaIntelligenceModule = lazy(() => import('./components/AfricaIntelligence'));
 const PaymentsModule = lazy(() => import('./components/Payments'));
 const AnalyticsModule = lazy(() => import('./components/Analytics'));
@@ -72,6 +73,7 @@ export default function App() {
     { name: 'Payments', icon: CreditCard },
     { name: 'Analytics', icon: BarChart3 },
     { name: 'Settings', icon: Settings },
+    { name: 'Admin', icon: ShieldCheck },
   ];
 
   const handleEnterPlatform = (data: any, isDemo: boolean) => {
@@ -154,6 +156,7 @@ export default function App() {
           {activeItem === 'Africa Intelligence' && <AfricaIntelligenceModule />}
           {activeItem === 'Payments' && <PaymentsModule />}
           {activeItem === 'Analytics' && <AnalyticsModule />}
+          {activeItem === 'Admin' && <AdminPanel />}
           {activeItem === 'Settings' && <div className="p-8 bg-zinc-950 border border-zinc-900 rounded-3xl text-gray-500 font-mono text-xs">PROCHAINEMENT...</div>}
         </Suspense>
       </div>

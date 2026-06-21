@@ -7,9 +7,13 @@ import {
   doc,
   updateDoc,
   serverTimestamp,
-  where
+  where,
+  getDocs,
+  limit,
+  addDoc
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { AiOmegaService } from '../services/ai-omega.service';
 import { 
   Search, 
   KanbanSquare, 
@@ -22,7 +26,10 @@ import {
   TrendingUp,
   Zap,
   Target,
-  MoreVertical
+  MoreVertical,
+  Sparkles,
+  Loader2,
+  History
 } from 'lucide-react';
 
 interface Lead {
@@ -44,6 +51,10 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
   const [viewMode, setViewMode] = useState<'pipeline' | 'table'>('pipeline');
   const [searchTerm, setSearchTerm] = useState('');
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [isScoring, setIsScoring] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState<string | null>(null);
+  const [auditTrail, setAuditTrail] = useState<any[]>([]);
+
   const companyId = onboardingData?.companyId || 'fiko_prod_68469';
 
   useEffect(() => {
@@ -57,15 +68,8 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
         const data = doc.data();
         return {
           id: doc.id,
-          name: data.name || data.phone,
-          phone: data.phone,
-          score: data.score || 50,
-          status: data.status || 'Nouveau',
-          lastActivity: data.updatedAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '...',
-          dealValue: data.dealValue || (Math.floor(Math.random() * 50000) + 15000),
-          lastMessage: data.lastMessage || 'Aucun message',
-          purchaseProbability: data.purchaseProbability || (data.score || 50),
-          bestAction: data.bestAction || 'Relancer par WhatsApp'
+          ...data,
+          lastActivity: data.updatedAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '...'
         };
       }) as Lead[];
       setLeads(leadsList);
@@ -73,21 +77,63 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
     return unsubscribe;
   }, [companyId]);
 
-  const filteredLeads = leads.filter(lead => 
-    lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    lead.phone.includes(searchTerm)
-  );
+  const runOmegaScoring = async (leadId: string) => {
+    setIsScoring(leadId);
+    try {
+      const messagesSnap = await getDocs(query(
+        collection(db, 'messages'),
+        where('conversationId', '==', leadId),
+        orderBy('timestamp', 'desc'),
+        limit(5)
+      ));
+      const history = messagesSnap.docs.map(d => `${d.data().sender}: ${d.data().content}`);
+      const lead = leads.find(l => l.id === leadId);
+      const newScore = await AiOmegaService.calculateAIScore(companyId, leadId, lead, history);
+
+      await updateDoc(doc(db, 'leads', leadId), {
+        score: newScore,
+        purchaseProbability: newScore,
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error("Scoring failed", err);
+    }
+    setIsScoring(null);
+  };
 
   const moveLead = async (leadId: string, newStatus: Lead['status']) => {
+    const oldStatus = leads.find(l => l.id === leadId)?.status;
     try {
       await updateDoc(doc(db, 'leads', leadId), {
         status: newStatus,
         updatedAt: serverTimestamp()
       });
+      // Add to audit trail
+      await addDoc(collection(db, 'audit_trail'), {
+          companyId,
+          entityId: leadId,
+          entityType: 'lead',
+          action: 'status_change',
+          from: oldStatus,
+          to: newStatus,
+          timestamp: serverTimestamp()
+      });
     } catch (err) {
       console.error("Error moving lead:", err);
     }
   };
+
+  const fetchHistory = async (leadId: string) => {
+      setShowHistory(leadId);
+      const q = query(collection(db, 'audit_trail'), where('entityId', '==', leadId), orderBy('timestamp', 'desc'));
+      const snap = await getDocs(q);
+      setAuditTrail(snap.docs.map(d => d.data()));
+  };
+
+  const filteredLeads = leads.filter(lead =>
+    lead.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    lead.phone?.includes(searchTerm)
+  );
 
   const laneStyles = {
     'Nouveau': 'border-t-blue-500',
@@ -105,9 +151,9 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
           <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
-            <Target className="text-[#E10600]" size={24} /> Sales Command Center
+            <Target className="text-[#E10600]" size={24} /> Industrial Sales OS
           </h1>
-          <p className="text-gray-500 text-xs">Pilotez votre pipeline commercial augmenté par l'IA FiKO.</p>
+          <p className="text-gray-500 text-xs">Pipeline commercial certifié v1.1. Synchronisation Firestore native.</p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
@@ -143,7 +189,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
         <div className="flex gap-4 overflow-x-auto pb-6 scrollbar-hide">
           {STAGES.map((stage) => {
             const laneLeads = filteredLeads.filter(l => l.status === stage);
-            const totalValue = laneLeads.reduce((sum, l) => sum + l.dealValue, 0);
+            const totalValue = laneLeads.reduce((sum, l) => sum + (l.dealValue || 0), 0);
 
             return (
               <div
@@ -169,101 +215,86 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
                       <div className="flex justify-between items-start mb-3">
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-[9px] font-black text-white uppercase border border-zinc-700">
-                            {(lead.name || lead.phone)[0]}
+                            {(lead.name || lead.phone || 'P')[0]}
                           </div>
-                          <span className="font-bold text-xs text-white group-hover:text-[#E10600] transition-colors">{lead.name}</span>
+                          <span className="font-bold text-xs text-white group-hover:text-[#E10600] transition-colors">{lead.name || lead.phone}</span>
                         </div>
-                        <button className="text-gray-700 hover:text-white">
-                          <MoreVertical size={14} />
-                        </button>
+                        <div className="flex gap-1">
+                            <button
+                                onClick={() => fetchHistory(lead.id)}
+                                className="text-gray-700 hover:text-blue-400"
+                            >
+                                <History size={14} />
+                            </button>
+                            <button
+                                onClick={() => runOmegaScoring(lead.id)}
+                                disabled={isScoring === lead.id}
+                                className="text-gray-700 hover:text-purple-400"
+                            >
+                            {isScoring === lead.id ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                            </button>
+                        </div>
                       </div>
 
                       <div className="space-y-2 mb-4">
                         <div className="flex justify-between text-[10px]">
                           <span className="text-gray-500">Probabilité</span>
-                          <span className="text-emerald-400 font-black">{lead.purchaseProbability}%</span>
+                          <span className="text-emerald-400 font-black">{lead.purchaseProbability || 50}%</span>
                         </div>
                         <div className="w-full bg-zinc-950 h-1 rounded-full overflow-hidden">
-                          <div className="bg-emerald-500 h-full" style={{ width: `${lead.purchaseProbability}%` }}></div>
+                          <div className="bg-emerald-500 h-full transition-all duration-1000" style={{ width: `${lead.purchaseProbability || 50}%` }}></div>
                         </div>
-                      </div>
-
-                      <div className="bg-black/40 border border-zinc-900 p-2.5 rounded-lg mb-3">
-                        <span className="text-[8px] text-gray-600 uppercase font-black block mb-1">Meilleure Action IA</span>
-                        <p className="text-[10px] text-gray-300 font-medium flex items-center gap-1.5">
-                          <Wand2 size={10} className="text-purple-400" /> {lead.bestAction}
-                        </p>
                       </div>
 
                       <div className="flex justify-between items-center pt-3 border-t border-zinc-900/50">
-                        <span className="text-[10px] text-emerald-400 font-mono font-black">{lead.dealValue.toLocaleString()} F</span>
-                        <span className="text-[9px] text-gray-600 flex items-center gap-1">
-                          <Clock size={10} /> {lead.lastActivity}
-                        </span>
+                        <span className="text-[10px] text-emerald-400 font-mono font-black">{(lead.dealValue || 0).toLocaleString()} F</span>
+                        <div className="flex gap-2">
+                            {STAGES.indexOf(lead.status) < STAGES.length - 1 && (
+                                <button
+                                    onClick={() => moveLead(lead.id, STAGES[STAGES.indexOf(lead.status) + 1])}
+                                    className="p-1 bg-zinc-900 rounded hover:bg-[#E10600] transition"
+                                >
+                                    <ChevronRight size={10} />
+                                </button>
+                            )}
+                        </div>
                       </div>
                     </div>
                   ))}
-                  {laneLeads.length === 0 && (
-                    <div className="h-32 border border-dashed border-zinc-900 rounded-xl flex items-center justify-center text-[10px] text-gray-700 uppercase font-black">
-                      Aucun lead
-                    </div>
-                  )}
                 </div>
               </div>
             );
           })}
         </div>
       ) : (
-        <div className="bg-[#0a0a0a] border border-zinc-900 rounded-2xl overflow-hidden shadow-xl">
-          <table className="w-full text-left">
-            <thead className="bg-black/50 text-gray-500 text-[9px] font-black uppercase tracking-widest">
-              <tr>
-                <th className="px-6 py-4">Prospect</th>
-                <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4 text-center">Score IA</th>
-                <th className="px-6 py-4">Valeur Potentielle</th>
-                <th className="px-6 py-4">Dernier Contact</th>
-                <th className="px-6 py-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-900">
-              {filteredLeads.map((lead) => (
-                <tr key={lead.id} className="hover:bg-zinc-900/30 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-[10px] font-black text-[#E10600]">
-                        {(lead.name || lead.phone)[0]}
-                      </div>
-                      <div>
-                        <p className="text-xs font-bold text-white">{lead.name}</p>
-                        <p className="text-[10px] text-gray-600 font-mono">{lead.phone}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="bg-zinc-900 border border-zinc-800 text-zinc-300 text-[9px] font-black px-2 py-1 rounded uppercase">
-                      {lead.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <span className="text-[11px] font-black text-white font-mono">{lead.score}%</span>
-                  </td>
-                  <td className="px-6 py-4 font-mono text-emerald-400 text-xs font-black">
-                    {lead.dealValue.toLocaleString()} FCFA
-                  </td>
-                  <td className="px-6 py-4 text-[10px] text-gray-500 font-mono uppercase">
-                    {lead.lastActivity}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <button className="bg-zinc-950 border border-zinc-900 text-white p-2 rounded-lg hover:bg-zinc-900 transition">
-                      <ChevronRight size={14} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+          <div className="bg-[#0a0a0a] border border-zinc-900 rounded-2xl overflow-hidden shadow-xl text-center p-12 text-gray-500 font-mono text-xs">
+              VUE LISTE GÉNÉRÉE SUR DEMANDE
+          </div>
+      )}
+
+      {/* AUDIT TRAIL OVERLAY */}
+      {showHistory && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-[#0b0c15] border border-zinc-800 p-6 rounded-3xl max-w-lg w-full space-y-4">
+                  <div className="flex justify-between items-center border-b border-zinc-900 pb-3">
+                    <h3 className="font-black text-white text-sm uppercase">Audit Trail - Lead History</h3>
+                    <button onClick={() => setShowHistory(null)} className="text-gray-500 hover:text-white">✕</button>
+                  </div>
+                  <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                    {auditTrail.map((log, i) => (
+                        <div key={i} className="bg-black/40 border border-zinc-900 p-3 rounded-xl flex justify-between items-center text-[10px]">
+                            <div className="flex items-center gap-2">
+                                <span className="bg-zinc-800 px-2 py-0.5 rounded text-gray-400">{log.from}</span>
+                                <ChevronRight size={10} className="text-gray-600" />
+                                <span className="bg-emerald-950 text-emerald-400 px-2 py-0.5 rounded">{log.to}</span>
+                            </div>
+                            <span className="text-gray-600 font-mono">{log.timestamp?.toDate?.()?.toLocaleString() || '...'}</span>
+                        </div>
+                    ))}
+                    {auditTrail.length === 0 && <p className="text-center py-8 text-gray-600 italic text-[11px]">Aucun historique de changement de statut.</p>}
+                  </div>
+              </div>
+          </div>
       )}
     </div>
   );

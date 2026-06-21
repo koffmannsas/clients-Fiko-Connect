@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { AiOmegaService, AISummaryResponse } from '../services/ai-omega.service';
 import {
   MessageSquare,
   Send,
@@ -14,7 +15,8 @@ import {
   Meh,
   Frown,
   BrainCircuit,
-  Search
+  Search,
+  Loader2
 } from 'lucide-react';
 
 interface ChatMessage {
@@ -45,6 +47,7 @@ export default function ConversationsModule({ onboardingData }: { onboardingData
   const [activeMessages, setActiveMessages] = useState<ChatMessage[]>([]);
   const [typedMessage, setTypedMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   const companyId = onboardingData?.companyId || 'fiko_prod_68469';
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -67,10 +70,10 @@ export default function ConversationsModule({ onboardingData }: { onboardingData
           score: data.score || 50,
           mobile: data.phone,
           status: data.status || 'NEW',
-          aiSummary: data.aiSummary || "Le client souhaite des informations sur les tarifs et la disponibilité.",
-          detectedObjections: data.detectedObjections || (data.score < 60 ? ["Prix", "Confiance"] : []),
-          sentiment: data.sentiment || (data.score > 70 ? 'positive' : 'neutral'),
-          recommendedAction: data.recommendedAction || "Envoyer le devis Wave immédiatement."
+          aiSummary: data.aiSummary,
+          detectedObjections: data.detectedObjections,
+          sentiment: data.sentiment,
+          recommendedAction: data.recommendedAction
         };
       }) as Thread[];
       setThreads(leadsList);
@@ -99,6 +102,32 @@ export default function ConversationsModule({ onboardingData }: { onboardingData
     });
     return unsubscribe;
   }, [activeThreadId, companyId]);
+
+  // PHASE OMEGA: Real-time Analysis Trigger
+  useEffect(() => {
+    if (activeMessages.length > 0 && activeThreadId) {
+      const lastMsg = activeMessages[activeMessages.length - 1];
+      if (lastMsg.sender === 'client') {
+        runOmegaAnalysis();
+      }
+    }
+  }, [activeMessages.length]);
+
+  const runOmegaAnalysis = async () => {
+    if (!activeThreadId || isAnalyzing) return;
+    setIsAnalyzing(true);
+    const history = activeMessages.map(m => `${m.sender}: ${m.content}`);
+    const analysis = await AiOmegaService.analyzeConversation(companyId, activeThreadId, history);
+
+    setThreads(prev => prev.map(t => t.id === activeThreadId ? {
+      ...t,
+      aiSummary: analysis.summary,
+      sentiment: analysis.sentiment,
+      detectedObjections: analysis.objections,
+      recommendedAction: analysis.recommendedAction
+    } : t));
+    setIsAnalyzing(false);
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -189,9 +218,15 @@ export default function ConversationsModule({ onboardingData }: { onboardingData
                   </div>
                 </div>
               </div>
-              <button className="bg-zinc-900 border border-zinc-800 text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-zinc-800 transition">
-                Prendre la main 👋
-              </button>
+              <div className="flex gap-2">
+                {isAnalyzing && <Loader2 className="animate-spin text-purple-400" size={16} />}
+                <button
+                    onClick={runOmegaAnalysis}
+                    className="bg-zinc-900 border border-zinc-800 text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-zinc-800 transition flex items-center gap-1.5"
+                >
+                    <Sparkles size={12} className="text-purple-400" /> Analyser
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-[radial-gradient(ellipse_at_bottom,_var(--tw-gradient-stops))] from-zinc-900/20 via-transparent to-transparent">
@@ -249,7 +284,7 @@ export default function ConversationsModule({ onboardingData }: { onboardingData
             <div>
               <span className="text-[8px] font-black text-gray-500 uppercase tracking-widest block mb-2">Résumé IA du besoin</span>
               <p className="text-[11px] text-gray-300 leading-relaxed italic bg-black/40 p-3 rounded-xl border border-zinc-900">
-                "{activeThread?.aiSummary}"
+                "{activeThread?.aiSummary || (isAnalyzing ? 'Analyse en cours...' : 'Prêt pour analyse.')}"
               </p>
             </div>
 
@@ -258,7 +293,7 @@ export default function ConversationsModule({ onboardingData }: { onboardingData
                 <span className="text-[8px] text-gray-500 uppercase font-black block mb-1">Sentiment</span>
                 <div className="flex justify-center items-center gap-1.5">
                   <SentimentIcon type={activeThread?.sentiment} />
-                  <span className="text-[10px] font-bold text-white capitalize">{activeThread?.sentiment}</span>
+                  <span className="text-[10px] font-bold text-white capitalize">{activeThread?.sentiment || '...'}</span>
                 </div>
               </div>
               <div className="bg-black/60 p-3 rounded-xl border border-zinc-900 text-center">
@@ -295,7 +330,7 @@ export default function ConversationsModule({ onboardingData }: { onboardingData
             <h4 className="font-black text-[10px] text-white uppercase tracking-widest">Meilleure Action (Next Step)</h4>
           </div>
           <p className="text-[11px] text-gray-200 font-bold leading-relaxed">
-            {activeThread?.recommendedAction}
+            {activeThread?.recommendedAction || "En attente d'interaction client."}
           </p>
           <button className="w-full bg-[#25D366] text-black py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-400 transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/20">
             Exécuter via WhatsApp ⚡
