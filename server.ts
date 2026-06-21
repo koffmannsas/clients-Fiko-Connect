@@ -139,14 +139,14 @@ app.post("/api/auth/verify-otp", express.json(), async (req, res) => {
         await db.collection('companies').doc(companyId).set({
             id: companyId,
             whatsappNumber: phoneNumber,
-            createdAt: FieldValue, Timestamp.serverTimestamp(),
+            createdAt: FieldValue.serverTimestamp(),
             status: 'active'
         }, { merge: true });
 
         await db.collection('subscriptions').doc(companyId).set({
             plan: 'starter',
             trialActive: true,
-            trialStartedAt: FieldValue, Timestamp.serverTimestamp(),
+            trialStartedAt: FieldValue.serverTimestamp(),
             trialExpiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
             messagesSent: 0,
             aiMessagesSent: 0,
@@ -156,7 +156,7 @@ app.post("/api/auth/verify-otp", express.json(), async (req, res) => {
         await docRef.delete();
         res.json({ success: true, companyId });
     } else {
-        await docRef.update({ attempts: FieldValue, Timestamp.increment(1) });
+        await docRef.update({ attempts: FieldValue.increment(1) });
         res.status(401).json({ error: "Invalid OTP" });
     }
 });
@@ -184,7 +184,7 @@ async function isDuplicate(messageId: string) {
     const docRef = db.collection('processed_messages').doc(messageId);
     try {
         await docRef.create({
-            processedAt: FieldValue, Timestamp.serverTimestamp(),
+            processedAt: FieldValue.serverTimestamp(),
             messageId: messageId
         });
         console.log(`[CORE] Message ${messageId} locked for processing.`);
@@ -201,7 +201,7 @@ async function isDuplicate(messageId: string) {
 
 // --- AI: Fiko Closer with Memory ---
 async function processWithAI(companyId: string, leadId: string, message: string) {
-    console.log(JSON.stringify({ level: "INFO", category: "AI", message: "Starting generation", leadId, timestamp: new Date().toISOString() })); // console.log(`[AI] Starting generation for Lead: ${leadId}`);
+    console.log(JSON.stringify({ level: "INFO", category: "AI", message: "Starting generation", leadId, timestamp: new Date().toISOString() }));
 
     // 1. Context Retrieval
     let businessContext = "Expert en vente WhatsApp.";
@@ -234,7 +234,7 @@ async function processWithAI(companyId: string, leadId: string, message: string)
             conversationId: leadId,
             sender: 'ai',
             content: responseText,
-            timestamp: FieldValue, Timestamp.serverTimestamp()
+            timestamp: FieldValue.serverTimestamp()
         });
     }
     console.log(`[DATA] AI response persisted.`);
@@ -261,7 +261,7 @@ async function syncLead(companyId: string, from: string, text: string) {
             companyId,
             phone: from,
             lastMessage: text,
-            updatedAt: FieldValue, Timestamp.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
             status: 'Nouveau'
         }, { merge: true });
     }
@@ -364,7 +364,7 @@ app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res)
                 console.warn(`[QUOTA] Limit reached for ${companyId}`);
                 return res.sendStatus(403);
             }
-            await subRef.update({ messagesSent: FieldValue, Timestamp.increment(1) });
+            await subRef.update({ messagesSent: FieldValue.increment(1) });
         }
     }
 
@@ -378,7 +378,7 @@ app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res)
             conversationId: leadId,
             sender: 'client',
             content: text,
-            timestamp: FieldValue, Timestamp.serverTimestamp()
+            timestamp: FieldValue.serverTimestamp()
         });
     }
     console.log(`[DATA] Saved message to lead ${leadId}`);

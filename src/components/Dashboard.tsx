@@ -23,16 +23,6 @@ import { db } from '../lib/firebase';
 import { AnalyticsService } from '../services/analytics.service';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-const graphData = [
-  { name: 'Lun', sales: 420000 },
-  { name: 'Mar', sales: 580000 },
-  { name: 'Mer', sales: 720000 },
-  { name: 'Jeu', sales: 640000 },
-  { name: 'Ven', sales: 910000 },
-  { name: 'Sam', sales: 1250000 },
-  { name: 'Dim', sales: 1850000 },
-];
-
 interface StatCardProps {
   title: string;
   value: string | number;
@@ -64,6 +54,7 @@ const StatCard = ({ title, value, trend, isUp, icon: Icon, color }: StatCardProp
 export default function Dashboard({ onboardingData }: { onboardingData: any }) {
   const [leads, setLeads] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
+  const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const companyId = onboardingData?.companyId || 'fiko_prod_68469';
 
@@ -78,12 +69,16 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
       setLeads(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    const fetchStats = async () => {
-        const s = await AnalyticsService.getExecutiveStats(companyId);
+    const fetchData = async () => {
+        const [s, h] = await Promise.all([
+            AnalyticsService.getExecutiveStats(companyId),
+            AnalyticsService.getHistoricalVolume(companyId)
+        ]);
         setStats(s);
+        setHistory(h);
         setLoading(false);
     };
-    fetchStats();
+    fetchData();
 
     return unsubscribe;
   }, [companyId]);
@@ -151,18 +146,18 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-        {/* REVENUE GROWTH GRAPH */}
+        {/* REVENUE GROWTH GRAPH (NOW DYNAMIC) */}
         <div className="lg:col-span-2 bg-[#0a0a0a] border border-gray-900 p-6 rounded-3xl shadow-xl">
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="text-white text-sm font-black uppercase tracking-widest flex items-center gap-2">
-                <Activity size={16} className="text-[#E10600]" /> Croissance de l'Activité
+                <Activity size={16} className="text-[#E10600]" /> Volume d'Activité Réel
               </h3>
             </div>
           </div>
           <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={graphData}>
+              <AreaChart data={history}>
                 <defs>
                   <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#E10600" stopOpacity={0.3}/>
@@ -201,7 +196,7 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
               <div className="flex -space-x-2">
                 {hotLeads.map((l, i) => (
                   <div key={i} className="w-7 h-7 rounded-full bg-red-900 border-2 border-[#0a0a0a] flex items-center justify-center text-[10px] font-black text-white uppercase">
-                    {(l.name || l.phone)[0]}
+                    {(l.name || l.phone || 'P')[0]}
                   </div>
                 ))}
                 {hotLeads.length === 0 && <div className="text-[10px] text-gray-650 italic">Aucun en ce moment</div>}
@@ -219,7 +214,7 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
               <div className="flex -space-x-2">
                 {warmLeads.map((l, i) => (
                   <div key={i} className="w-7 h-7 rounded-full bg-amber-900 border-2 border-[#0a0a0a] flex items-center justify-center text-[10px] font-black text-white uppercase">
-                    {(l.name || l.phone)[0]}
+                    {(l.name || l.phone || 'P')[0]}
                   </div>
                 ))}
               </div>
@@ -236,7 +231,7 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
               <div className="flex -space-x-2">
                 {coldLeads.map((l, i) => (
                   <div key={i} className="w-7 h-7 rounded-full bg-blue-900 border-2 border-[#0a0a0a] flex items-center justify-center text-[10px] font-black text-white uppercase">
-                    {(l.name || l.phone)[0]}
+                    {(l.name || l.phone || 'P')[0]}
                   </div>
                 ))}
               </div>
