@@ -1,27 +1,16 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { 
-  Rocket,
-  Zap,
   ChevronRight, 
-  Lock,
   Loader2,
-  Smartphone,
-  QrCode,
-  ShieldCheck,
-  CheckCircle2,
-  AlertTriangle,
-  Globe,
-  User,
-  Briefcase,
   Eye,
   EyeOff,
-  Search,
   ChevronLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AuthService } from '../services/auth.service';
-import { COUNTRIES, Country } from '../config/countries';
+import { Country } from '../config/countries';
 import { PhoneService } from '../services/phone.service';
+import CountrySelector from './CountrySelector';
 
 type Flow = 'login' | 'signup' | 'idle';
 type SignupStep = 'welcome' | 'country' | 'phone' | 'identity' | 'activity' | 'security' | 'otp';
@@ -32,7 +21,6 @@ export default function QuantumGate({ onEnter }: { onEnter: (data: any, isDemo: 
   const [signupStep, setSignupStep] = useState<SignupStep>('welcome');
   const [loginStep, setLoginStep] = useState<LoginStep>('credentials');
 
-  // Form Data
   const [country, setCountry] = useState<Country | null>(null);
   const [searchCountry, setSearchCountry] = useState('');
   const [phone, setPhone] = useState('');
@@ -47,13 +35,6 @@ export default function QuantumGate({ onEnter }: { onEnter: (data: any, isDemo: 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const filteredCountries = useMemo(() => {
-    return COUNTRIES.filter(c =>
-      c.name.toLowerCase().includes(searchCountry.toLowerCase()) ||
-      c.dialCode.includes(searchCountry)
-    );
-  }, [searchCountry]);
-
   const industries = [
     "Immobilier", "Automobile", "Assurance", "Banque", "Formation",
     "Coaching", "Santé", "Beauté", "Restaurant", "E-commerce",
@@ -63,7 +44,7 @@ export default function QuantumGate({ onEnter }: { onEnter: (data: any, isDemo: 
   const handleSignupActivation = async () => {
     if (password !== confirmPassword) return setError('Les mots de passe ne correspondent pas');
     setLoading(true);
-    const normalized = PhoneService.normalize(phone, country?.dialCode || '');
+    const normalized = PhoneService.normalizePhoneNumber(phone, country?.dialCode || '');
     const ok = await AuthService.sendOTP(normalized, {
         type: 'signup',
         firstName,
@@ -144,33 +125,11 @@ export default function QuantumGate({ onEnter }: { onEnter: (data: any, isDemo: 
 
             {signupStep === 'country' && (
                 <StepWrapper key="s2" title="Où opérez-vous ?" subtitle="Sélectionnez votre pays d'activité principal." onBack={() => setSignupStep('welcome')}>
-                    <div className="space-y-4">
-                        <div className="relative">
-                            <Search className="absolute left-4 top-4 text-gray-500" size={18} />
-                            <input
-                                type="text"
-                                placeholder="Rechercher un pays..."
-                                value={searchCountry}
-                                onChange={(e) => setSearchCountry(e.target.value)}
-                                className="w-full bg-zinc-900 border border-zinc-800 p-4 pl-12 rounded-2xl text-white outline-none focus:border-[#E10600]"
-                            />
-                        </div>
-                        <div className="max-h-64 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-                            {filteredCountries.map(c => (
-                                <button
-                                    key={c.code}
-                                    onClick={() => { setCountry(c); setSignupStep('phone'); }}
-                                    className="w-full flex items-center justify-between p-4 bg-zinc-900/50 border border-zinc-800 rounded-2xl hover:border-[#E10600] transition-colors group"
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-2xl">{c.flag}</span>
-                                        <span className="font-bold text-sm">{c.name}</span>
-                                    </div>
-                                    <span className="text-gray-500 font-mono text-xs group-hover:text-[#E10600]">{c.dialCode}</span>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
+                    <CountrySelector
+                        search={searchCountry}
+                        onSearchChange={setSearchCountry}
+                        onSelect={(c) => { setCountry(c); setSignupStep('phone'); }}
+                    />
                 </StepWrapper>
             )}
 
@@ -228,7 +187,7 @@ export default function QuantumGate({ onEnter }: { onEnter: (data: any, isDemo: 
 
             {signupStep === 'activity' && (
                 <StepWrapper key="s5" title="Votre Secteur" subtitle="Fiko adaptera son langage à votre métier." onBack={() => setSignupStep('identity')}>
-                    <div className="grid grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-2">
+                    <div className="grid grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
                         {industries.map(ind => (
                             <button
                                 key={ind}
