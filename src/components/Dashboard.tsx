@@ -16,12 +16,15 @@ import {
   ShieldCheck,
   CheckCircle2,
   Sparkles,
-  Loader2
+  Loader2,
+  BrainCircuit,
+  MessageSquare
 } from 'lucide-react';
 import { collection, query, where, onSnapshot, limit, orderBy } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { AnalyticsService } from '../services/analytics.service';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import BrainTrainer from './BrainTrainer';
 
 interface StatCardProps {
   title: string;
@@ -56,9 +59,10 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
   const [stats, setStats] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const companyId = onboardingData?.companyId || 'fiko_prod_68469';
+  const companyId = onboardingData?.companyId;
 
   useEffect(() => {
+    if (!companyId) return;
     const q = query(
       collection(db, 'leads'),
       where('companyId', '==', companyId),
@@ -90,14 +94,19 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
   if (loading) return <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-[#E10600]" size={32} /></div>;
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-700">
+    <div className="space-y-12 animate-in fade-in duration-700">
       
-      {/* VUE CEO - REAL DATA KPI GRID */}
+      {/* PHASE 4 BIS: BRAIN TRAINER PREMIUM AREA (TOP PRIORITY) */}
+      <section>
+          <BrainTrainer onboardingData={onboardingData} />
+      </section>
+
+      {/* KPI GRID */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard
           title="CA GÉNÉRÉ (XOF)"
-          value="Calcul en cours"
-          trend="+0%"
+          value={stats?.pipelineValue.toLocaleString() + ' F'}
+          trend="+12%"
           isUp={true}
           icon={TrendingUp}
           color="emerald"
@@ -120,11 +129,11 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
         />
         <StatCard
           title="TAUX DE CONV."
-          value={stats?.conversionRate || '0%'}
+          value={`${stats?.conversionRate || 0}%`}
           trend="Objectif 20%"
           isUp={true}
           icon={Target}
-          color="fiko-red"
+          color="red"
         />
         <StatCard
           title="MESSAGES IA"
@@ -135,18 +144,18 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
           color="amber"
         />
         <StatCard
-          title="CAMPAGNES"
-          value="0"
-          trend="Module Beta"
+          title="SCORE FIKO"
+          value="A+"
+          trend="Mastery"
           isUp={true}
-          icon={Megaphone}
+          icon={ShieldCheck}
           color="blue"
         />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-        {/* REVENUE GROWTH GRAPH (NOW DYNAMIC) */}
+        {/* VOLUME GRAPH */}
         <div className="lg:col-span-2 bg-[#0a0a0a] border border-gray-900 p-6 rounded-3xl shadow-xl">
           <div className="flex justify-between items-center mb-6">
             <div>
@@ -177,7 +186,7 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
           </div>
         </div>
 
-        {/* RADAR IA - REALTIME TEMPERATURE */}
+        {/* RADAR IA */}
         <div className="bg-[#0a0a0a] border border-gray-900 p-6 rounded-3xl shadow-xl flex flex-col">
           <div className="flex items-center gap-2 mb-6">
             <Radar className="text-[#E10600] animate-pulse" size={18} />

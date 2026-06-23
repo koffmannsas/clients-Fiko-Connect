@@ -9,6 +9,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { brain } from "./src/ai/brain";
 import crypto from "crypto";
 import axios from "axios";
+import bcrypt from "bcrypt";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,27 +35,38 @@ app.get("/health", (req, res) => {
     res.json({ status: "ok", env: process.env.NODE_ENV, port: PORT, timestamp: new Date().toISOString() });
 });
 
-app.get("/firebase-status", async (req, res) => {
-    try {
-        const collections = await db.listCollections();
-        res.json({ projectId: PROJECT_ID, firestore: "connected", collections: collections.map(c => c.id) });
-    } catch (e: any) {
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// --- INDUSTRIAL OTP AUTHENTICATION ---
+// --- INDUSTRIAL OTP & AUTH ENGINE V2 ---
 app.post("/api/auth/send-otp", express.json(), async (req, res) => {
-    const { phoneNumber } = req.body;
+    const { phoneNumber, type, password, firstName, lastName, activity } = req.body;
     if (!phoneNumber) return res.status(400).json({ error: "Missing phone number" });
+
+    if (type === 'login') {
+        const companySnap = await db.collection('companies').where('whatsappNumber', '==', phoneNumber).limit(1).get();
+        if (companySnap.empty) return res.status(404).json({ error: "Compte inexistant" });
+
+        const companyData = companySnap.docs[0].data();
+        if (password && companyData.passwordHash) {
+            const match = await bcrypt.compare(password, companyData.passwordHash);
+            if (!match) return res.status(401).json({ error: "Mot de passe incorrect" });
+        }
+    }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const sessionId = crypto.randomUUID();
 
     try {
+        const signupData = type === 'signup' ? {
+            pendingFirstName: firstName,
+            pendingLastName: lastName,
+            pendingActivity: activity,
+            pendingPasswordHash: await bcrypt.hash(password, 10)
+        } : {};
+
         await db.collection('otp_sessions').doc(phoneNumber).set({
             otp,
             sessionId,
+            type,
+            ...signupData,
             attempts: 0,
             expiresAt: Timestamp.fromMillis(Date.now() + 5 * 60 * 1000)
         });
@@ -93,22 +105,28 @@ app.post("/api/auth/verify-otp", express.json(), async (req, res) => {
     if (data?.otp === otp) {
         const companyId = `fiko_org_${phoneNumber.replace(/[^0-9]/g, '')}`;
 
-        await db.collection('companies').doc(companyId).set({
-            id: companyId,
-            whatsappNumber: phoneNumber,
-            createdAt: FieldValue.serverTimestamp(),
-            status: 'active'
-        }, { merge: true });
+        if (data.type === 'signup') {
+            await db.collection('companies').doc(companyId).set({
+                id: companyId,
+                whatsappNumber: phoneNumber,
+                firstName: data.pendingFirstName,
+                lastName: data.pendingLastName,
+                industry: data.pendingActivity,
+                passwordHash: data.pendingPasswordHash,
+                createdAt: FieldValue.serverTimestamp(),
+                status: 'active'
+            }, { merge: true });
 
-        await db.collection('subscriptions').doc(companyId).set({
-            plan: 'premium',
-            trialActive: true,
-            trialStartedAt: FieldValue.serverTimestamp(),
-            trialExpiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
-            messagesSent: 0,
-            aiMessagesSent: 0,
-            maxMessages: 10000
-        }, { merge: true });
+            await db.collection('subscriptions').doc(companyId).set({
+                plan: 'premium',
+                trialActive: true,
+                trialStartedAt: FieldValue.serverTimestamp(),
+                trialExpiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                messagesSent: 0,
+                aiMessagesSent: 0,
+                maxMessages: 10000
+            }, { merge: true });
+        }
 
         const customToken = await auth.createCustomToken(companyId, { phoneNumber });
         await docRef.delete();
@@ -119,23 +137,54 @@ app.post("/api/auth/verify-otp", express.json(), async (req, res) => {
     }
 });
 
-// --- INDUSTRIAL QR PAIRING ---
-app.post("/api/auth/pairing/create", express.json(), async (req, res) => {
-    const { phoneNumber } = req.body;
-    const pairingCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+// --- BRAIN TRAINER ENGINE ---
+app.post("/api/ai/train", express.json(), async (req, res) => {
+    const { companyId, message } = req.body;
+    if (!companyId || !message) return res.status(400).json({ error: "Missing data" });
 
-    await db.collection('pairing_sessions').doc(phoneNumber).set({
-        code: pairingCode,
-        status: 'pending',
-        createdAt: FieldValue.serverTimestamp()
-    });
+    try {
+        const trainingPrompt = `Tu es Fiko Knowledge Engine. Un client t'explique son business.
+        Tu dois :
+        1. Analyser et extraire les informations clés (prix, produits, concurrents, objections).
+        2. Répondre intelligemment en confirmant ce que tu as appris.
+        3. Poser une question de suivi stratégique pour approfondir tes connaissances.
 
-    res.json({ success: true, pairingCode });
+        Message du client: "${message}"`;
+
+        const aiResponse = await brain.generateGeneric(companyId, "trainer", trainingPrompt, "Training Session");
+
+        // Persist Knowledge
+        await db.collection('fiko_memory').doc(companyId).collection('knowledge_base').add({
+            rawInput: message,
+            timestamp: FieldValue.serverTimestamp(),
+            processedResponse: aiResponse
+        });
+
+        // Update Knowledge Score (Simulated increment for MVP)
+        const memRef = db.collection('fiko_memory').doc(companyId);
+        await memRef.set({
+            knowledgeScore: FieldValue.increment(2),
+            lastUpdate: FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        const memSnap = await memRef.get();
+        const currentScore = memSnap.data()?.knowledgeScore || 0;
+
+        res.json({ response: aiResponse, newScore: currentScore });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
-app.get("/api/auth/pairing/status/:phone", async (req, res) => {
-    const snap = await db.collection('pairing_sessions').doc(req.params.phone).get();
-    res.json(snap.exists ? snap.data() : { status: 'none' });
+// --- OMEGA AI PROXY ---
+app.post("/api/ai/generic", express.json(), async (req, res) => {
+    try {
+        const { companyId, leadId, prompt, context } = req.body;
+        const response = await brain.generateGeneric(companyId, leadId, prompt, context);
+        res.json({ response });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // --- WHATSAPP CORE ---

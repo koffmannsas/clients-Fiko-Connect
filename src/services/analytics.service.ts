@@ -28,7 +28,6 @@ export class AnalyticsService {
   }
 
   static async getHistoricalVolume(companyId: string) {
-    // Standard industrial data generation based on actual lead activity
     const labels = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
     return labels.map(label => ({
         name: label,
@@ -36,19 +35,23 @@ export class AnalyticsService {
     }));
   }
 
-  static async getRecentAuditLogs(companyId: string) {
-    const logsRef = collection(db, 'audit_trail');
-    const q = query(
-      logsRef,
-      where('companyId', '==', companyId),
-      orderBy('timestamp', 'desc'),
-      limit(10)
-    );
-    try {
-        const snap = await getDocs(q);
-        return snap.docs.map(d => d.data());
-    } catch (e) {
-        return [];
-    }
+  static async getKnowledgeMetrics(companyId: string) {
+    const memSnap = await getDocs(query(collection(db, 'fiko_memory', companyId, 'knowledge_base')));
+    return {
+        count: memSnap.size,
+        mastery: Math.min(10 + memSnap.size * 5, 100)
+    };
+  }
+
+  static async getPaymentStats(companyId: string) {
+    const txSnap = await getDocs(query(collection(db, 'transactions'), where('companyId', '==', companyId)));
+    const txs = txSnap.docs.map(d => d.data());
+    const total = txs.filter(t => t.status === 'SUCCESS').reduce((acc, curr) => acc + (curr.amount || 0), 0);
+    return {
+        totalRevenue: total,
+        fees: total * 0.01,
+        net: total * 0.99,
+        transactions: txs
+    };
   }
 }

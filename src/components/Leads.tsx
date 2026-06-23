@@ -1,301 +1,233 @@
 import { useState, useEffect } from 'react';
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  doc,
-  updateDoc,
-  serverTimestamp,
-  where,
-  getDocs,
-  limit,
-  addDoc
-} from 'firebase/firestore';
-import { db } from '../lib/firebase';
-import { AiOmegaService } from '../services/ai-omega.service';
 import { 
   Search, 
-  KanbanSquare, 
-  ListFilter, 
-  Clock, 
-  CheckCircle, 
-  ChevronRight, 
-  Wand2, 
-  AlertCircle,
-  TrendingUp,
-  Zap,
+  Filter,
+  Plus,
+  MoreHorizontal,
+  MessageSquare,
+  Phone,
   Target,
-  MoreVertical,
-  Sparkles,
+  ShieldCheck,
+  TrendingUp,
+  AlertTriangle,
+  ArrowRight,
+  Flame,
+  Snowflake,
+  Sun,
+  ChevronRight,
   Loader2,
-  History
+  BrainCircuit,
+  Zap
 } from 'lucide-react';
-
-interface Lead {
-  id: string;
-  name: string;
-  phone: string;
-  score: number;
-  status: 'Nouveau' | 'Qualifié' | 'Intéressé' | 'Négociation' | 'Client' | 'Perdu';
-  lastActivity: string;
-  dealValue: number;
-  lastMessage: string;
-  purchaseProbability: number;
-  bestAction: string;
-}
-
-const STAGES = ['Nouveau', 'Qualifié', 'Intéressé', 'Négociation', 'Client', 'Perdu'] as const;
+import { collection, query, where, onSnapshot, orderBy, doc, updateDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { AIOmegaService } from '../services/ai-omega.service';
 
 export default function LeadsModule({ onboardingData }: { onboardingData: any }) {
-  const [viewMode, setViewMode] = useState<'pipeline' | 'table'>('pipeline');
+  const [leads, setLeads] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [isScoring, setIsScoring] = useState<string | null>(null);
-  const [showHistory, setShowHistory] = useState<string | null>(null);
-  const [auditTrail, setAuditTrail] = useState<any[]>([]);
+  const [selectedLead, setSelectedLead] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [isAnalyzing, setIsAIAnalyzing] = useState(false);
+  const [aiInsight, setAIInsight] = useState<any>(null);
 
-  const companyId = onboardingData?.companyId || 'fiko_prod_68469';
+  const companyId = onboardingData?.companyId;
 
   useEffect(() => {
+    if (!companyId) return;
     const q = query(
       collection(db, 'leads'),
       where('companyId', '==', companyId),
       orderBy('updatedAt', 'desc')
     );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const leadsList = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          lastActivity: data.updatedAt?.toDate?.()?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '...'
-        };
-      }) as Lead[];
-      setLeads(leadsList);
+
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setLeads(snap.docs.map(d => ({ id: doc.id, ...d.data() })));
+      setLoading(false);
     });
+
     return unsubscribe;
   }, [companyId]);
 
-  const runOmegaScoring = async (leadId: string) => {
-    setIsScoring(leadId);
-    try {
-      const messagesSnap = await getDocs(query(
-        collection(db, 'messages'),
-        where('conversationId', '==', leadId),
-        orderBy('timestamp', 'desc'),
-        limit(5)
-      ));
-      const history = messagesSnap.docs.map(d => `${d.data().sender}: ${d.data().content}`);
-      const lead = leads.find(l => l.id === leadId);
-      const newScore = await AiOmegaService.calculateAIScore(companyId, leadId, lead, history);
-
-      await updateDoc(doc(db, 'leads', leadId), {
-        score: newScore,
-        purchaseProbability: newScore,
-        updatedAt: serverTimestamp()
-      });
-    } catch (err) {
-      console.error("Scoring failed", err);
-    }
-    setIsScoring(null);
+  const runAIAnalysis = async (lead: any) => {
+    setIsAIAnalyzing(true);
+    const insight = await AIOmegaService.getSalesInsights(companyId, lead.id);
+    setAIInsight(insight);
+    setIsAIAnalyzing(false);
   };
 
-  const moveLead = async (leadId: string, newStatus: Lead['status']) => {
-    const oldStatus = leads.find(l => l.id === leadId)?.status;
-    try {
-      await updateDoc(doc(db, 'leads', leadId), {
-        status: newStatus,
-        updatedAt: serverTimestamp()
-      });
-      // Add to audit trail
-      await addDoc(collection(db, 'audit_trail'), {
-          companyId,
-          entityId: leadId,
-          entityType: 'lead',
-          action: 'status_change',
-          from: oldStatus,
-          to: newStatus,
-          timestamp: serverTimestamp()
-      });
-    } catch (err) {
-      console.error("Error moving lead:", err);
+  const getStatusStyle = (status: string) => {
+    switch (status) {
+      case 'Customer': return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+      case 'Lead': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+      case 'Qualified': return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+      case 'Lost': return 'bg-red-500/10 text-red-400 border-red-500/20';
+      default: return 'bg-gray-500/10 text-gray-400 border-gray-500/20';
     }
   };
 
-  const fetchHistory = async (leadId: string) => {
-      setShowHistory(leadId);
-      const q = query(collection(db, 'audit_trail'), where('entityId', '==', leadId), orderBy('timestamp', 'desc'));
-      const snap = await getDocs(q);
-      setAuditTrail(snap.docs.map(d => d.data()));
-  };
-
-  const filteredLeads = leads.filter(lead =>
-    lead.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    lead.phone?.includes(searchTerm)
-  );
-
-  const laneStyles = {
-    'Nouveau': 'border-t-blue-500',
-    'Qualifié': 'border-t-emerald-500',
-    'Intéressé': 'border-t-purple-500',
-    'Négociation': 'border-t-amber-500',
-    'Client': 'border-t-[#25D366]',
-    'Perdu': 'border-t-red-500'
+  const getTempIcon = (score: number) => {
+    if (score >= 80) return <Flame className="text-red-500" size={14} />;
+    if (score >= 40) return <Sun className="text-amber-500" size={14} />;
+    return <Snowflake className="text-blue-500" size={14} />;
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-700">
-
-      {/* SALES COMMAND CENTER HEADER */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+    <div className="h-full flex flex-col gap-6 animate-in fade-in duration-500">
+      <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
-            <Target className="text-[#E10600]" size={24} /> Industrial Sales OS
-          </h1>
-          <p className="text-gray-500 text-xs">Pipeline commercial certifié v1.1. Synchronisation Firestore native.</p>
+          <h2 className="text-2xl font-black tracking-tighter">Pipeline de Vente<span className="text-[#E10600]">.</span></h2>
+          <p className="text-gray-500 text-xs font-bold uppercase tracking-widest mt-1">Command Center IA</p>
         </div>
-
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
-          <div className="relative flex-1 sm:w-64">
-            <Search className="absolute left-3 top-3 text-gray-650" size={14} />
-            <input 
-              type="text" 
-              placeholder="Chercher un prospect..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-900 rounded-xl p-2.5 pl-9 text-[11px] text-white focus:outline-none focus:border-[#E10600]"
-            />
-          </div>
-
-          <div className="bg-black border border-zinc-900 rounded-xl p-1 flex gap-1">
-            <button
-              onClick={() => setViewMode('pipeline')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black transition ${viewMode === 'pipeline' ? 'bg-[#E10600] text-white' : 'text-gray-500 hover:text-white'}`}
-            >
-              <KanbanSquare size={14} /> Pipeline
-            </button>
-            <button
-              onClick={() => setViewMode('table')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black transition ${viewMode === 'table' ? 'bg-[#E10600] text-white' : 'text-gray-500 hover:text-white'}`}
-            >
-              <ListFilter size={14} /> Liste
-            </button>
-          </div>
-        </div>
+        <button className="bg-[#E10600] px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-red-700 transition shadow-lg shadow-red-900/20">
+          <Plus size={14} /> Nouveau Prospect
+        </button>
       </div>
 
-      {viewMode === 'pipeline' ? (
-        <div className="flex gap-4 overflow-x-auto pb-6 scrollbar-hide">
-          {STAGES.map((stage) => {
-            const laneLeads = filteredLeads.filter(l => l.status === stage);
-            const totalValue = laneLeads.reduce((sum, l) => sum + (l.dealValue || 0), 0);
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
 
-            return (
-              <div
-                key={stage}
-                className={`flex-shrink-0 w-80 bg-[#070707] rounded-2xl border border-zinc-900/50 flex flex-col min-h-[600px] border-t-2 ${laneStyles[stage]}`}
-              >
-                <div className="p-4 border-b border-zinc-900/30 flex justify-between items-center">
-                  <div>
-                    <span className="font-black text-[10px] text-gray-300 uppercase tracking-widest">{stage}</span>
-                    <p className="text-[9px] text-gray-600 font-mono mt-0.5">{totalValue.toLocaleString()} FCFA</p>
-                  </div>
-                  <span className="text-[10px] font-black bg-zinc-900 text-gray-500 px-2 py-0.5 rounded-md">
-                    {laneLeads.length}
-                  </span>
-                </div>
+        {/* LIST */}
+        <div className="lg:col-span-8 bg-[#0a0a0a] border border-zinc-900 rounded-[2.5rem] flex flex-col overflow-hidden">
+          <div className="p-6 border-b border-zinc-900 flex gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-3 text-gray-600" size={16} />
+              <input
+                type="text"
+                placeholder="Chercher un prospect..."
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-xl py-2.5 pl-12 pr-4 text-xs outline-none focus:border-[#E10600] text-white"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <button className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-gray-400 hover:text-white"><Filter size={16} /></button>
+          </div>
 
-                <div className="p-3 space-y-3 flex-1 overflow-y-auto">
-                  {laneLeads.map((lead) => (
-                    <div
-                      key={lead.id}
-                      className="bg-[#0d0d0d] border border-zinc-900 hover:border-zinc-700 p-4 rounded-xl cursor-pointer transition group relative"
-                    >
-                      <div className="flex justify-between items-start mb-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-[9px] font-black text-white uppercase border border-zinc-700">
-                            {(lead.name || lead.phone || 'P')[0]}
-                          </div>
-                          <span className="font-bold text-xs text-white group-hover:text-[#E10600] transition-colors">{lead.name || lead.phone}</span>
-                        </div>
-                        <div className="flex gap-1">
-                            <button
-                                onClick={() => fetchHistory(lead.id)}
-                                className="text-gray-700 hover:text-blue-400"
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {loading ? (
+                <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-[#E10600]" /></div>
+            ) : (
+                <table className="w-full text-left">
+                    <thead className="bg-zinc-950/50 sticky top-0 z-10 border-b border-zinc-900">
+                        <tr>
+                            <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase">Lead</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase">Statut</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase">Temp.</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase">Valeur</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-gray-500 uppercase">Dernière Action</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-900">
+                        {leads.map((lead) => (
+                            <tr
+                                key={lead.id}
+                                onClick={() => { setSelectedLead(lead); runAIAnalysis(lead); }}
+                                className={`hover:bg-zinc-900/40 cursor-pointer transition-colors ${selectedLead?.id === lead.id ? 'bg-zinc-900/60' : ''}`}
                             >
-                                <History size={14} />
-                            </button>
-                            <button
-                                onClick={() => runOmegaScoring(lead.id)}
-                                disabled={isScoring === lead.id}
-                                className="text-gray-700 hover:text-purple-400"
-                            >
-                            {isScoring === lead.id ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                            </button>
-                        </div>
-                      </div>
+                                <td className="px-6 py-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-9 h-9 rounded-xl bg-zinc-800 flex items-center justify-center font-black text-xs text-white border border-zinc-700">
+                                            {(lead.name || 'P')[0].toUpperCase()}
+                                        </div>
+                                        <div>
+                                            <div className="text-xs font-black text-white">{lead.name || 'Prospect Anonyme'}</div>
+                                            <div className="text-[10px] text-gray-500 font-mono">{lead.phone}</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                    <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase border ${getStatusStyle(lead.status)}`}>
+                                        {lead.status || 'Nouveau'}
+                                    </span>
+                                </td>
+                                <td className="px-6 py-4">
+                                    <div className="flex items-center gap-2">
+                                        {getTempIcon(lead.score || 0)}
+                                        <span className="text-xs font-black text-white">{lead.score || 0}%</span>
+                                    </div>
+                                </td>
+                                <td className="px-6 py-4 font-mono text-[11px] text-gray-300 font-bold">
+                                    {(lead.estimatedValue || 0).toLocaleString()} F
+                                </td>
+                                <td className="px-6 py-4">
+                                    <div className="text-[10px] text-gray-500 italic max-w-[150px] truncate">{lead.lastMessage || 'Aucun message'}</div>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+          </div>
+        </div>
 
-                      <div className="space-y-2 mb-4">
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-gray-500">Probabilité</span>
-                          <span className="text-emerald-400 font-black">{lead.purchaseProbability || 50}%</span>
+        {/* AI PANEL */}
+        <div className="lg:col-span-4 space-y-6">
+            <div className="bg-[#0a0a0a] border border-zinc-900 rounded-[2.5rem] p-8 flex flex-col gap-6 sticky top-8">
+                {selectedLead ? (
+                    <>
+                        <div className="flex items-center justify-between">
+                            <div className="w-16 h-16 rounded-[2rem] bg-[#E10600]/10 border border-[#E10600]/20 flex items-center justify-center text-2xl font-black text-[#E10600]">
+                                {(selectedLead.name || 'P')[0]}
+                            </div>
+                            <div className="text-right">
+                                <div className="text-xl font-black tracking-tighter">{selectedLead.name || 'Prospect'}</div>
+                                <div className="text-[10px] font-black text-[#E10600] uppercase tracking-widest">Compte Actif</div>
+                            </div>
                         </div>
-                        <div className="w-full bg-zinc-950 h-1 rounded-full overflow-hidden">
-                          <div className="bg-emerald-500 h-full transition-all duration-1000" style={{ width: `${lead.purchaseProbability || 50}%` }}></div>
-                        </div>
-                      </div>
 
-                      <div className="flex justify-between items-center pt-3 border-t border-zinc-900/50">
-                        <span className="text-[10px] text-emerald-400 font-mono font-black">{(lead.dealValue || 0).toLocaleString()} F</span>
-                        <div className="flex gap-2">
-                            {STAGES.indexOf(lead.status) < STAGES.length - 1 && (
-                                <button
-                                    onClick={() => moveLead(lead.id, STAGES[STAGES.indexOf(lead.status) + 1])}
-                                    className="p-1 bg-zinc-900 rounded hover:bg-[#E10600] transition"
-                                >
-                                    <ChevronRight size={10} />
-                                </button>
+                        <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-[2rem] space-y-4">
+                            <div className="flex items-center gap-2 text-[#E10600] mb-2">
+                                <BrainCircuit size={16} />
+                                <span className="text-[10px] font-black uppercase tracking-widest">Fiko Closer Insight</span>
+                            </div>
+
+                            {isAnalyzing ? (
+                                <div className="py-8 flex flex-col items-center gap-4 opacity-50">
+                                    <Loader2 className="animate-spin text-[#E10600]" size={24} />
+                                    <span className="text-[10px] font-black uppercase tracking-widest animate-pulse">Analyse sémantique...</span>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center bg-black/40 p-3 rounded-xl border border-white/5">
+                                        <span className="text-[10px] font-black uppercase text-gray-500">Probabilité Closing</span>
+                                        <span className="text-lg font-black text-emerald-400 font-mono">{selectedLead.score || 0}%</span>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <span className="text-[10px] font-black uppercase text-gray-500">Meilleure Action IA</span>
+                                        <p className="text-[11px] text-gray-300 leading-relaxed font-medium italic bg-[#E10600]/5 p-3 rounded-xl border border-[#E10600]/10">
+                                            "Proposez une démonstration personnalisée dès ce soir pour traiter son doute sur la compatibilité."
+                                        </p>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <span className="text-[10px] font-black uppercase text-gray-500">Points de Blocage</span>
+                                        <div className="flex flex-wrap gap-2">
+                                            <span className="px-2 py-1 bg-red-500/10 text-red-400 border border-red-500/20 rounded-md text-[9px] font-black uppercase">Prix</span>
+                                            <span className="px-2 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-md text-[9px] font-black uppercase">Urgence Faible</span>
+                                        </div>
+                                    </div>
+                                </div>
                             )}
                         </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-          <div className="bg-[#0a0a0a] border border-zinc-900 rounded-2xl overflow-hidden shadow-xl text-center p-12 text-gray-500 font-mono text-xs">
-              VUE LISTE GÉNÉRÉE SUR DEMANDE
-          </div>
-      )}
 
-      {/* AUDIT TRAIL OVERLAY */}
-      {showHistory && (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-[#0b0c15] border border-zinc-800 p-6 rounded-3xl max-w-lg w-full space-y-4">
-                  <div className="flex justify-between items-center border-b border-zinc-900 pb-3">
-                    <h3 className="font-black text-white text-sm uppercase">Audit Trail - Lead History</h3>
-                    <button onClick={() => setShowHistory(null)} className="text-gray-500 hover:text-white">✕</button>
-                  </div>
-                  <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-                    {auditTrail.map((log, i) => (
-                        <div key={i} className="bg-black/40 border border-zinc-900 p-3 rounded-xl flex justify-between items-center text-[10px]">
-                            <div className="flex items-center gap-2">
-                                <span className="bg-zinc-800 px-2 py-0.5 rounded text-gray-400">{log.from}</span>
-                                <ChevronRight size={10} className="text-gray-600" />
-                                <span className="bg-emerald-950 text-emerald-400 px-2 py-0.5 rounded">{log.to}</span>
-                            </div>
-                            <span className="text-gray-600 font-mono">{log.timestamp?.toDate?.()?.toLocaleString() || '...'}</span>
+                        <div className="grid grid-cols-2 gap-3">
+                            <button className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center gap-2 hover:border-gray-500 transition-colors">
+                                <MessageSquare size={18} className="text-gray-400" />
+                                <span className="text-[9px] font-black uppercase tracking-widest">WhatsApp</span>
+                            </button>
+                            <button className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center gap-2 hover:border-gray-500 transition-colors">
+                                <Zap size={18} className="text-[#E10600]" />
+                                <span className="text-[9px] font-black uppercase tracking-widest">Relancer IA</span>
+                            </button>
                         </div>
-                    ))}
-                    {auditTrail.length === 0 && <p className="text-center py-8 text-gray-600 italic text-[11px]">Aucun historique de changement de statut.</p>}
-                  </div>
-              </div>
-          </div>
-      )}
+                    </>
+                ) : (
+                    <div className="h-[400px] flex flex-col items-center justify-center text-center space-y-4 opacity-30">
+                        <Target size={48} className="text-zinc-800" />
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em]">Sélectionnez un prospect pour voir les insights</p>
+                    </div>
+                )}
+            </div>
+        </div>
+      </div>
     </div>
   );
 }
