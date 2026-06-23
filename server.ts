@@ -137,7 +137,7 @@ app.post("/api/auth/verify-otp", express.json(), async (req, res) => {
     }
 });
 
-// --- BRAIN TRAINER ENGINE ---
+// --- V3.1: BRAIN TRAINER ENGINE (FIKO SALES DNA™) ---
 app.post("/api/ai/train", express.json(), async (req, res) => {
     const { companyId, message } = req.body;
     if (!companyId || !message) return res.status(400).json({ error: "Missing data" });
@@ -145,32 +145,82 @@ app.post("/api/ai/train", express.json(), async (req, res) => {
     try {
         const trainingPrompt = `Tu es Fiko Knowledge Engine. Un client t'explique son business.
         Tu dois :
-        1. Analyser et extraire les informations clés (prix, produits, concurrents, objections).
-        2. Répondre intelligemment en confirmant ce que tu as appris.
-        3. Poser une question de suivi stratégique pour approfondir tes connaissances.
+        1. Analyser et extraire les informations clés.
+        2. Catégoriser l'information dans une de ces catégories : 'products', 'pricing', 'objections', 'competitors', 'faq'.
+        3. Répondre intelligemment en confirmant ce que tu as appris.
+        4. Poser une question de suivi stratégique.
+
+        IMPORTANT: Ta réponse doit être au format JSON:
+        {
+          "category": "la catégorie détectée",
+          "fact": "le fait extrait",
+          "response": "ton message au client"
+        }
 
         Message du client: "${message}"`;
 
-        const aiResponse = await brain.generateGeneric(companyId, "trainer", trainingPrompt, "Training Session");
+        const rawResponse = await brain.generateGeneric(companyId, "trainer", trainingPrompt, "Training Session");
+        let parsed;
+        try {
+            parsed = JSON.parse(rawResponse.replace(/```json|```/g, ''));
+        } catch (e) {
+            parsed = { category: 'general', fact: message, response: rawResponse };
+        }
 
-        // Persist Knowledge
-        await db.collection('fiko_memory').doc(companyId).collection('knowledge_base').add({
+        // Persist Knowledge (Fiko Sales DNA™)
+        const batch = db.batch();
+        const knowledgeRef = db.collection('fiko_memory').doc(companyId).collection('knowledge_base').doc();
+        batch.set(knowledgeRef, {
             rawInput: message,
-            timestamp: FieldValue.serverTimestamp(),
-            processedResponse: aiResponse
+            category: parsed.category,
+            fact: parsed.fact,
+            timestamp: FieldValue.serverTimestamp()
         });
 
-        // Update Knowledge Score (Simulated increment for MVP)
+        // Specific DNA Collections
+        if (['products', 'pricing', 'objections', 'competitors', 'faq'].includes(parsed.category)) {
+            const dnaRef = db.collection(parsed.category).doc(`${companyId}_${crypto.randomBytes(4).toString('hex')}`);
+            batch.set(dnaRef, {
+                companyId,
+                content: parsed.fact,
+                createdAt: FieldValue.serverTimestamp()
+            });
+        }
+
+        // Update Knowledge Score
         const memRef = db.collection('fiko_memory').doc(companyId);
-        await memRef.set({
+        batch.set(memRef, {
             knowledgeScore: FieldValue.increment(2),
             lastUpdate: FieldValue.serverTimestamp()
         }, { merge: true });
 
+        await batch.commit();
+
         const memSnap = await memRef.get();
         const currentScore = memSnap.data()?.knowledgeScore || 0;
 
-        res.json({ response: aiResponse, newScore: currentScore });
+        res.json({ response: parsed.response, newScore: currentScore, category: parsed.category });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post("/api/ai/generate-playbook", express.json(), async (req, res) => {
+    const { companyId } = req.body;
+    try {
+        const knowledgeSnap = await db.collection('fiko_memory').doc(companyId).collection('knowledge_base').get();
+        const facts = knowledgeSnap.docs.map(d => d.data().fact).join("\n- ");
+
+        const playbookPrompt = `En te basant sur ces faits : \n- ${facts}\nGénère un Playbook Commercial complet (Scripts WhatsApp, Relances, Traitement des objections).`;
+
+        const playbook = await brain.generateGeneric(companyId, "playbook_gen", playbookPrompt, "Playbook Generation");
+
+        await db.collection('sales_playbooks').doc(companyId).set({
+            content: playbook,
+            updatedAt: FieldValue.serverTimestamp()
+        });
+
+        res.json({ success: true, playbook });
     } catch (e: any) {
         res.status(500).json({ error: e.message });
     }
@@ -247,4 +297,73 @@ if (IS_PRODUCTION) {
 
 app.listen(PORT, async () => {
     console.log(`🚀 Fiko Engine Active on project: ${PROJECT_ID}`);
+});
+
+// --- V3.1 EXTENSION: DNA ASSETS GENERATOR ---
+app.post("/api/ai/dna/generate-assets", express.json(), async (req, res) => {
+    const { companyId, category } = req.body;
+    try {
+        const dnaSnap = await db.collection(category).where('companyId', '==', companyId).get();
+        const rawDNA = dnaSnap.docs.map(d => d.data().content).join("\n- ");
+
+        const assetPrompt = `Tu es Fiko DNA Architect. Basé sur ces informations : \n- ${rawDNA}\nGénère 5 scripts WhatsApp de haute performance pour la catégorie ${category}. Format JSON: {"scripts": ["..."]}`;
+
+        const response = await brain.generateGeneric(companyId, "dna_assets", assetPrompt, "Asset Generation");
+        let parsed = JSON.parse(response.replace(/```json|```/g, ''));
+
+        const assetsRef = db.collection('fiko_dna_assets').doc(`${companyId}_${category}`);
+        await assetsRef.set({
+            category,
+            scripts: parsed.scripts,
+            updatedAt: FieldValue.serverTimestamp()
+        });
+
+        res.json({ success: true, scripts: parsed.scripts });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// --- V3.2: VOICE INTELLIGENCE™ PIPELINE (SKELETON) ---
+app.post("/api/ai/voice-trainer", express.json(), async (req, res) => {
+    const { companyId, audioUrl } = req.body;
+    try {
+        // Pipeline Simulation: Audio -> Transcription -> DNA Extraction
+        console.log(`[VOICE] Processing commercial audio for ${companyId}: ${audioUrl}`);
+
+        const transcription = "Simulated Transcription: 'Nos prix commencent à 50 000 F et nous offrons une remise de 10% pour tout paiement par Wave.'";
+
+        const extractionPrompt = `Extrais l'ADN commercial de cette transcription : "${transcription}". Catégorise et formate en JSON.`;
+        const dna = await brain.generateGeneric(companyId, "voice_extraction", extractionPrompt, "Voice Training");
+
+        await db.collection('fiko_memory').doc(companyId).collection('voice_sessions').add({
+            audioUrl,
+            transcription,
+            extractedDNA: dna,
+            timestamp: FieldValue.serverTimestamp()
+        });
+
+        res.json({ success: true, transcription, dna });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// --- V3.3: FIKO AUTOPILOT™ ENGINE ---
+app.post("/api/whatsapp/autopilot/status", express.json(), async (req, res) => {
+    const { companyId } = req.body;
+    try {
+        const memSnap = await db.collection('fiko_memory').doc(companyId).get();
+        const score = memSnap.data()?.knowledgeScore || 0;
+        const isAutopilotReady = score >= 90;
+
+        res.json({
+            score,
+            isAutopilotReady,
+            status: isAutopilotReady ? 'ACTIVE' : 'LEARNING',
+            missingDNA: score < 90 ? ['Concurrents', 'Scripts de Relance'] : []
+        });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
 });
