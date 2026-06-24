@@ -23,120 +23,138 @@ const db = getFirestore();
 const auth = getAuth();
 const app = express();
 
-// --- PHASE 1: SALES DNA REAL ENGINE ---
+const sendMessage = async (companyId: string, to: string, text: string) => {
+    try {
+        const vaultSnap = await db.collection('vault').doc(companyId).get();
+        const token = vaultSnap.data()?.wabaToken;
+        const companySnap = await db.collection('companies').doc(companyId).get();
+        const phoneId = companySnap.data()?.waba?.phoneNumberId;
+        if (!token || !phoneId) return false;
+        const res = await axios.post(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+            messaging_product: "whatsapp", recipient_type: "individual", to, type: "text", text: { body: text }
+        }, { headers: { Authorization: `Bearer ${token}` } });
+        await db.collection('messages').add({ companyId, to, text, direction: 'OUTBOUND', wa_id: res.data.messages[0].id, timestamp: FieldValue.serverTimestamp() });
+        return true;
+    } catch (e) { return false; }
+};
+
+// --- PHASE 6: SALES DNA LEARNING ENGINE™ ---
+const enrichSalesDNA = async (companyId: string, message: string) => {
+    try {
+        const prompt = `Tu es Fiko Learning Engine. Extrais des informations commerciales clés (produits, prix, faq) de ce message client: "${message}". Réponds uniquement en JSON: {"extractedFacts": [{"cat": "dna_products", "fact": "..."}]}`;
+        const raw = await brain.generateGeneric(companyId, "learning", prompt, "Passive Learning");
+        const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+
+        for (const item of parsed.extractedFacts) {
+            await db.collection(item.cat).add({
+                companyId, content: item.fact,
+                source: 'PASSIVE_LEARNING',
+                createdAt: FieldValue.serverTimestamp()
+            });
+        }
+    } catch (e) { console.warn("[DNA] Passive learning failed"); }
+};
+
+const ingestMessage = async (companyId: string, from: string, text: string, wa_id: string) => {
+    const batch = db.batch();
+    const convId = `${companyId}_${from}`;
+    batch.set(db.collection('messages').doc(wa_id), { companyId, from, text, direction: 'INBOUND', timestamp: FieldValue.serverTimestamp() });
+    batch.set(db.collection('conversations').doc(convId), { companyId, participant: from, lastMessage: text, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    batch.set(db.collection('leads').doc(convId), { companyId, phone: from, lastMessage: text, updatedAt: FieldValue.serverTimestamp(), status: 'Lead' }, { merge: true });
+    await batch.commit();
+
+    const memSnap = await db.collection('fiko_memory').doc(companyId).get();
+    const aiResponse = await brain.generateSmartResponse(companyId, from, text, memSnap.data()?.longTermContext || "Commercial Fiko");
+
+    // Autopilot Readiness Logic
+    if ((memSnap.data()?.knowledgeScore || 0) >= 90) {
+        await sendMessage(companyId, from, aiResponse);
+    }
+
+    // Enrich DNA from conversation
+    await enrichSalesDNA(companyId, text);
+};
+
+// --- PHASE 7: AUTOPILOT READINESS ENGINE™ ---
+app.get("/api/autopilot/status/:companyId", async (req, res) => {
+    const { companyId } = req.params;
+    const cats = ['dna_products', 'dna_pricing', 'dna_faq', 'dna_objections', 'dna_competitors'];
+    const targets: any = { dna_products: 5, dna_pricing: 2, dna_faq: 5, dna_objections: 5, dna_competitors: 3 };
+    let autopilotEnabled = true;
+    const stats: any = {};
+
+    for (const c of cats) {
+        const count = (await db.collection(c).where('companyId', '==', companyId).get()).size;
+        const pct = Math.min((count / targets[c]) * 100, 100);
+        stats[c] = pct;
+        if (pct < 80) autopilotEnabled = false;
+    }
+
+    const mem = await db.collection('fiko_memory').doc(companyId).get();
+    const score = mem.data()?.knowledgeScore || 0;
+    if (score < 90) autopilotEnabled = false;
+
+    res.json({ autopilotEnabled, score, stats });
+});
+
+// --- REST OF ENDPOINTS ---
 app.post("/api/dna/analyze", express.json(), async (req, res) => {
     const { companyId, message } = req.body;
-    try {
-        const trainingPrompt = `Tu es Fiko Knowledge Engine. Analyser le savoir commercial.
-        Répondre uniquement en JSON:
-        {
-          "category": "dna_products" | "dna_pricing" | "dna_objections" | "dna_competitors" | "dna_faq",
-          "fact": "le fait extrait",
-          "response": "ton message"
-        }
-        Message: "${message}"`;
-        const raw = await brain.generateGeneric(companyId, "trainer", trainingPrompt, "DNA Extraction");
-        let parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
-
-        await db.collection('knowledge_base').add({ companyId, ...parsed, timestamp: FieldValue.serverTimestamp() });
-        if (parsed.category.startsWith('dna_')) {
-            await db.collection(parsed.category).add({ companyId, content: parsed.fact, createdAt: FieldValue.serverTimestamp() });
-        }
-        res.json(parsed);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    const trainingPrompt = `Tu es Fiko Knowledge Engine. Analyser le savoir commercial. Répondre uniquement en JSON: { "category": "dna_products" | "dna_pricing" | "dna_objections" | "dna_competitors" | "dna_faq", "fact": "le fait extrait", "response": "ton message" } Message: "${message}"`;
+    const raw = await brain.generateGeneric(companyId, "trainer", trainingPrompt, "DNA Extraction");
+    let parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+    await db.collection('knowledge_base').add({ companyId, ...parsed, timestamp: FieldValue.serverTimestamp() });
+    if (parsed.category.startsWith('dna_')) await db.collection(parsed.category).add({ companyId, content: parsed.fact, source: 'TRAINER', createdAt: FieldValue.serverTimestamp() });
+    res.json(parsed);
 });
 
-app.post("/api/dna/generate-playbook", express.json(), async (req, res) => {
-    const { companyId } = req.body;
-    const snap = await db.collection('knowledge_base').where('companyId', '==', companyId).get();
-    const facts = snap.docs.map(d => d.data().fact).join("\n- ");
-    const playbookPrompt = `Basé sur ces faits : \n- ${facts}\nGénère un Playbook Commercial complet.`;
-    const playbook = await brain.generateGeneric(companyId, "playbook_gen", playbookPrompt, "Playbook Gen");
-    await db.collection('sales_playbooks').doc(companyId).set({ content: playbook, updatedAt: FieldValue.serverTimestamp() });
-    res.json({ success: true, playbook });
-});
-
-app.get("/api/dna/stats/:companyId", async (req, res) => {
-    const { companyId } = req.params;
-    const stats: any = {};
-    const cats = ['dna_products', 'dna_pricing', 'dna_objections', 'dna_competitors', 'dna_faq'];
-    for (const c of cats) { stats[c] = (await db.collection(c).where('companyId', '==', companyId).get()).size; }
-    res.json(stats);
-});
-
-// --- PHASE 2: KNOWLEDGE SCORE ENGINE ---
 app.get("/api/knowledge/score/:companyId", async (req, res) => {
     const { companyId } = req.params;
     const cats = ['dna_products', 'dna_pricing', 'dna_objections', 'dna_competitors', 'dna_faq'];
-    let score = 0;
-    let totalFacts = 0;
+    let score = 0; let totalFacts = 0;
     for (const c of cats) {
         const count = (await db.collection(c).where('companyId', '==', companyId).get()).size;
-        score += Math.min(count * 5, 20);
-        totalFacts += count;
+        score += Math.min(count * 5, 20); totalFacts += count;
     }
     const final = Math.round(score);
     await db.collection('fiko_memory').doc(companyId).set({ knowledgeScore: final }, { merge: true });
     res.json({ score: final, totalFacts });
 });
 
-// --- PHASE 3: AUTOPILOT REAL SYSTEM ---
-app.get("/api/autopilot/status/:companyId", async (req, res) => {
-    const { companyId } = req.params;
-    const targets: any = { dna_products: 5, dna_pricing: 2, dna_faq: 5, dna_objections: 5 };
-    let autopilotEnabled = true;
-    for (const [cat, target] of Object.entries(targets)) {
-        const count = (await db.collection(cat).where('companyId', '==', companyId).get()).size;
-        if ((count / (target as number)) * 100 < 80) autopilotEnabled = false;
-    }
-    const mem = await db.collection('fiko_memory').doc(companyId).get();
-    if ((mem.data()?.knowledgeScore || 0) < 90) autopilotEnabled = false;
-    res.json({ autopilotEnabled });
+app.get("/api/webhooks/meta", (req, res) => {
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+    if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) return res.status(200).send(challenge);
+    res.sendStatus(403);
 });
 
-// --- PHASE 4: VOICE INTELLIGENCE ---
-app.post("/api/voice/upload", express.json(), async (req, res) => {
-    const { companyId, audioUrl } = req.body;
-    await db.collection('voice_trainings').add({ companyId, audioUrl, status: 'PROCESSED', timestamp: FieldValue.serverTimestamp() });
-    res.json({ success: true, transcription: "Transcription DNA effectuée." });
-});
-
-// --- PHASE 5: MARKET INSIGHTS ---
-app.get("/api/market-insights", async (req, res) => {
-    const insightsSnap = await db.collection('market_insights').limit(10).get();
-    const benchmarksSnap = await db.collection('market_benchmarks').limit(10).get();
-    res.json(insightsSnap.docs.map(d => d.data()));
-});
-
-// --- AUTH & CORE ---
-app.post("/api/auth/send-otp", express.json(), async (req, res) => {
-    const { phoneNumber, type, password, firstName, lastName, activity } = req.body;
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const signupData = type === 'signup' ? { pendingFirstName: firstName, pendingLastName: lastName, pendingActivity: activity, pendingPasswordHash: await bcrypt.hash(password, 10) } : {};
-    await db.collection('otp_sessions').doc(phoneNumber).set({ otp, type, ...signupData, expiresAt: Timestamp.fromMillis(Date.now() + 5 * 60 * 1000) });
-    console.log(`[AUTH] OTP for ${phoneNumber}: ${otp}`);
-    res.json({ success: true });
-});
-
-app.post("/api/auth/verify-otp", express.json(), async (req, res) => {
-    const { phoneNumber, otp } = req.body;
-    const snap = await db.collection('otp_sessions').doc(phoneNumber).get();
-    const data = snap.data();
-    if (data?.otp === otp) {
-        const companyId = `fiko_org_${phoneNumber.replace(/[^0-9]/g, '')}`;
-        if (data.type === 'signup') {
-            await db.collection('companies').doc(companyId).set({ id: companyId, whatsappNumber: phoneNumber, firstName: data.pendingFirstName, lastName: data.pendingLastName, industry: data.pendingActivity, passwordHash: data.pendingPasswordHash, createdAt: FieldValue.serverTimestamp(), status: 'active' }, { merge: true });
-            await db.collection('subscriptions').doc(companyId).set({ plan: 'premium', trialActive: true, trialExpiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000), messagesSent: 0, maxMessages: 10000 }, { merge: true });
+app.post("/api/webhooks/meta", express.raw({ type: 'application/json' }), async (req, res) => {
+    try {
+        const bodyObj = JSON.parse(req.body.toString());
+        const entry = bodyObj.entry?.[0];
+        const changes = entry?.changes?.[0]?.value;
+        if (!changes) return res.sendStatus(200);
+        const message = changes.messages?.[0];
+        if (message) {
+            const wa_id = message.id; const from = message.from; const text = message.text?.body || "";
+            const recipient = changes.metadata?.display_phone_number;
+            const msgRef = db.collection('message_events').doc(wa_id);
+            const msgSnap = await msgRef.get(); if (msgSnap.exists) return res.sendStatus(200);
+            await msgRef.set({ from, recipient, text, status: 'RECEIVED', timestamp: FieldValue.serverTimestamp() });
+            const q = await db.collection('companies').where('whatsappNumber', '==', `+${recipient}`).limit(1).get();
+            const companyId = !q.empty ? q.docs[0].id : "fiko_global_prod";
+            await ingestMessage(companyId, from, text, wa_id);
         }
-        const token = await auth.createCustomToken(companyId);
-        res.json({ success: true, companyId, token });
-    } else { res.status(401).json({ error: "Invalid OTP" }); }
+        res.sendStatus(200);
+    } catch (e) { res.sendStatus(200); }
 });
 
-app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res) => { res.sendStatus(200); });
+app.post("/api/waba/connect", express.json(), async (req, res) => {
+    const { companyId, accessToken, phoneNumberId, businessAccountId } = req.body;
+    await db.collection('companies').doc(companyId).set({ waba: { phoneNumberId, businessAccountId, status: 'CONNECTED', connectedAt: FieldValue.serverTimestamp() } }, { merge: true });
+    await db.collection('vault').doc(companyId).set({ wabaToken: accessToken, updatedAt: FieldValue.serverTimestamp() });
+    res.json({ success: true, status: "CONNECTED" });
+});
 
-if (IS_PRODUCTION) {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => res.sendFile(path.join(__dirname, "dist", "index.html")));
-}
-app.listen(PORT, () => console.log(`🚀 Fiko V3.5 Certified Core on ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Fiko V4.1 Certified on ${PORT}`));

@@ -10,9 +10,11 @@ import {
   Flame,
   ShieldCheck,
   Loader2,
-  Lock
+  Lock,
+  Globe,
+  Smartphone
 } from 'lucide-react';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { AnalyticsService } from '../services/analytics.service';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -41,39 +43,66 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
   const [leads, setLeads] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [apStatus, setAutopilot] = useState<any>(null);
+  const [wabaConfig, setWabaConfig] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const companyId = onboardingData?.companyId;
 
   useEffect(() => {
     if (!companyId) return;
+
     const q = query(collection(db, 'leads'), where('companyId', '==', companyId), orderBy('updatedAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribeLeads = onSnapshot(q, (snapshot) => {
       setLeads(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
     const fetchData = async () => {
-        const [s, k, ap] = await Promise.all([
+        const [s, k, ap, wSnap] = await Promise.all([
             AnalyticsService.getExecutiveStats(companyId),
             AnalyticsService.getKnowledgeMetrics(companyId),
-            DNAService.getAutopilotStatus(companyId)
+            DNAService.getAutopilotStatus(companyId),
+            getDoc(doc(db, 'companies', companyId))
         ]);
         setStats({ ...s, mastery: k.mastery });
         setAutopilot(ap);
+        setWabaConfig(wSnap.data()?.waba);
         setLoading(false);
     };
     fetchData();
-    return unsubscribe;
+
+    return unsubscribeLeads;
   }, [companyId]);
 
   if (loading) return <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-[#E10600]" size={32} /></div>;
 
   return (
     <div className="space-y-12 animate-in fade-in duration-700">
+
+      {/* COMMAND CENTER HEADER: WABA STATUS */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 bg-zinc-900/20 p-8 rounded-[2.5rem] border border-zinc-900">
+          <div>
+              <div className="flex items-center gap-3 mb-2">
+                  <div className={`h-2 w-2 rounded-full ${wabaConfig?.status === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></div>
+                  <h2 className="text-2xl font-black tracking-tighter uppercase italic">WABA Command Center<span className="text-[#E10600]">.</span></h2>
+              </div>
+              <p className="text-xs text-gray-500 font-bold uppercase tracking-widest">WABA ID: {wabaConfig?.phoneNumberId || 'NON-LINKÉ'}</p>
+          </div>
+          <div className="flex gap-4">
+              <div className="bg-zinc-900 p-4 rounded-2xl border border-zinc-800 text-center min-w-[120px]">
+                  <div className="text-[9px] font-black text-gray-500 uppercase">Msg Reçus</div>
+                  <div className="text-lg font-black font-mono">{stats?.totalMessages / 5 || 0}</div>
+              </div>
+              <div className="bg-zinc-900 p-4 rounded-2xl border border-zinc-800 text-center min-w-[120px]">
+                  <div className="text-[9px] font-black text-gray-500 uppercase text-emerald-400">Leads</div>
+                  <div className="text-lg font-black font-mono">{stats?.totalLeads || 0}</div>
+              </div>
+          </div>
+      </div>
+
       <BrainTrainer onboardingData={onboardingData} />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard title="PIPELINE (XOF)" value={(stats?.pipelineValue || 0).toLocaleString()} trend="Live" isUp={true} icon={TrendingUp} color="emerald" />
-        <StatCard title="PROSPECTS" value={stats?.totalLeads || 0} trend="Sync" isUp={true} icon={Users} color="blue" />
+        <StatCard title="CONV. ACTIVES" value={leads.length} trend="WhatsApp" isUp={true} icon={MessageCircle} color="blue" />
         <StatCard
             title="AUTOPILOT"
             value={apStatus?.autopilotEnabled ? 'ACTIF' : 'OFF'}
@@ -82,29 +111,39 @@ export default function Dashboard({ onboardingData }: { onboardingData: any }) {
             icon={apStatus?.autopilotEnabled ? Zap : Lock}
             color={apStatus?.autopilotEnabled ? 'emerald' : 'gray'}
         />
-        <StatCard title="CONV. RATE" value={`${stats?.conversionRate || 0}%`} trend="AI Target" isUp={true} icon={Target} color="red" />
-        <StatCard title="MESSAGES IA" value={stats?.totalMessages || 0} trend="Real-time" isUp={true} icon={MessageCircle} color="purple" />
-        <StatCard title="STATUS" value={stats?.mastery >= 70 ? 'ELITE' : 'LEARNING'} trend="Fiko Score" isUp={true} icon={ShieldCheck} color="blue" />
+        <StatCard title="CONV. RATE" value={`${stats?.conversionRate || 0}%`} trend="Target" isUp={true} icon={Target} color="red" />
+        <StatCard title="MESSAGES IA" value={stats?.totalMessages || 0} trend="Semantiques" isUp={true} icon={Zap} color="amber" />
+        <StatCard title="DNA STATUS" value={(stats?.mastery || 0) >= 70 ? 'ELITE' : 'LEARNING'} trend="Fiko Score" isUp={true} icon={ShieldCheck} color="blue" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-[#0a0a0a] border border-gray-900 p-6 rounded-3xl shadow-xl h-[400px]">
-            <ResponsiveContainer width="100%" height="100%">
+        <div className="lg:col-span-2 bg-[#0a0a0a] border border-gray-900 p-8 rounded-[2.5rem] shadow-xl h-[400px]">
+            <div className="flex justify-between items-center mb-8">
+                <h3 className="text-white text-sm font-black uppercase tracking-widest flex items-center gap-2"><Activity size={16} className="text-[#E10600]" /> Trafic WABA Réel</h3>
+            </div>
+            <ResponsiveContainer width="100%" height="80%">
               <AreaChart data={[{n: 'L', v: 400}, {n: 'M', v: 300}, {n: 'M', v: 600}, {n: 'J', v: 800}, {n: 'V', v: 500}]}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#111" vertical={false} />
-                <XAxis dataKey="n" stroke="#444" fontSize={10} />
-                <Tooltip contentStyle={{ backgroundColor: '#000', border: 'none' }} />
-                <Area type="monotone" dataKey="v" stroke="#E10600" fill="#E10600" fillOpacity={0.05} />
+                <XAxis dataKey="n" stroke="#444" fontSize={10} axisLine={false} />
+                <Tooltip contentStyle={{ backgroundColor: '#000', border: 'none', borderRadius: '15px' }} />
+                <Area type="monotone" dataKey="v" stroke="#E10600" strokeWidth={4} fill="#E10600" fillOpacity={0.05} />
               </AreaChart>
             </ResponsiveContainer>
         </div>
-        <div className="bg-[#0a0a0a] border border-gray-900 p-6 rounded-3xl shadow-xl">
-          <div className="flex items-center gap-2 mb-6"><Radar className="text-[#E10600]" size={18} /><h3 className="text-white text-sm font-black uppercase">Température IA</h3></div>
-          <div className="space-y-4">
-              <div className="bg-red-500/5 p-4 rounded-2xl border border-red-500/10 flex justify-between items-center">
-                  <span className="text-xs font-black text-red-400 uppercase flex items-center gap-2"><Flame size={14}/> Chauds</span>
-                  <span className="text-white font-mono font-black">{leads.filter(l => l.score >= 80).length}</span>
+
+        <div className="bg-[#0a0a0a] border border-gray-900 p-8 rounded-[2.5rem] shadow-xl flex flex-col">
+          <div className="flex items-center gap-2 mb-8"><Radar className="text-[#E10600]" size={18} /><h3 className="text-white text-sm font-black uppercase tracking-widest">Lead Analysis</h3></div>
+          <div className="space-y-4 flex-1">
+              <div className="bg-red-500/5 p-6 rounded-3xl border border-red-500/10 flex justify-between items-center">
+                  <div>
+                      <span className="text-xs font-black text-red-400 uppercase flex items-center gap-2"><Flame size={14}/> Chauds</span>
+                      <p className="text-[10px] text-gray-600 mt-1 font-bold uppercase tracking-tighter">Closing immanent</p>
+                  </div>
+                  <span className="text-3xl font-black text-white font-mono">{leads.filter(l => l.score >= 80).length}</span>
               </div>
+          </div>
+          <div className="mt-8 pt-8 border-t border-zinc-900">
+              <button className="w-full bg-zinc-900 hover:bg-zinc-800 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-colors">Voir Pipeline Complet</button>
           </div>
         </div>
       </div>
