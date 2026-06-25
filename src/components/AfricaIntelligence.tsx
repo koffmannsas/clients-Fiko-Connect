@@ -1,10 +1,5 @@
 import { useState, useEffect } from 'react';
-import {
-  Globe,
-  Loader2,
-  Sparkles,
-  ArrowUpRight
-} from 'lucide-react';
+import { Globe, Loader2, ArrowUpRight, Sparkles } from 'lucide-react';
 import { AnalyticsService } from '../services/analytics.service';
 
 export default function AfricaIntelligenceModule() {
@@ -13,9 +8,14 @@ export default function AfricaIntelligenceModule() {
 
   useEffect(() => {
     const loadTrends = async () => {
-        const data = await AnalyticsService.getMarketInsights();
-        setMarketTrends(data);
-        setLoading(false);
+        try {
+            const data = await AnalyticsService.getMarketInsights();
+            setMarketTrends(Array.isArray(data) ? data : []);
+        } catch (e) {
+            setMarketTrends([]);
+        } finally {
+            setLoading(false);
+        }
     };
     loadTrends();
   }, []);
@@ -32,7 +32,6 @@ export default function AfricaIntelligenceModule() {
             <h2 className="text-4xl font-black tracking-tighter">Africa Market Insights<span className="text-blue-500">.</span></h2>
         </div>
       </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {marketTrends.map((t, i) => (
               <div key={i} className="bg-zinc-900/40 border border-zinc-800 p-6 rounded-[2rem] hover:border-blue-500/30 transition-all group">
@@ -45,15 +44,11 @@ export default function AfricaIntelligenceModule() {
                           <div className="text-[9px] font-black uppercase text-gray-500 tracking-widest">Objection n°1</div>
                           <div className="text-xs font-bold text-gray-200 bg-black/40 p-3 rounded-xl border border-white/5">{t.topObjection}</div>
                       </div>
-                      <div className="space-y-1">
-                          <div className="text-[9px] font-black uppercase text-blue-400 tracking-widest flex items-center gap-1.5"><Sparkles size={10} /> Best DNA Relance</div>
-                          <div className="text-xs font-bold text-blue-100 bg-blue-500/5 p-3 rounded-xl border border-blue-500/10">{t.bestRelance}</div>
-                      </div>
                   </div>
               </div>
           ))}
           {marketTrends.length === 0 && (
-              <div className="lg:col-span-3 p-12 text-center text-gray-600 font-black uppercase tracking-widest text-xs border border-zinc-900 rounded-3xl">Synchronisation des données marché en cours...</div>
+              <div className="lg:col-span-3 p-12 text-center text-gray-600 font-black uppercase tracking-widest text-[10px] border border-zinc-900 rounded-3xl">Synchronisation des données marché...</div>
           )}
       </div>
     </div>
