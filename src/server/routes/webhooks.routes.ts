@@ -30,10 +30,10 @@ router.post("/meta", express.raw({ type: 'application/json' }), async (req, res)
             if ((await msgRef.get()).exists) return res.sendStatus(200);
             await msgRef.set({ from, recipient, text, status: 'RECEIVED', timestamp: FieldValue.serverTimestamp() });
 
+            // Robust multi-tenant resolution
             const q = await FirestoreRepo.db().collection('companies').where('whatsappNumber', '==', `+${recipient}`).limit(1).get();
             const companyId = !q.empty ? q.docs[0].id : "fiko_global_prod";
 
-            // Process Ingestion
             await FirestoreRepo.syncLead(companyId, from, text);
             const aiResponse = await AIService.generateResponse(companyId, from, text);
 

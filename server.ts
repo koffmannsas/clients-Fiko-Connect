@@ -6,6 +6,7 @@ import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 
 // Routes
 import authRoutes from "./src/server/routes/auth.routes";
+import aiRoutes from "./src/server/routes/ai.routes";
 import dnaRoutes from "./src/server/routes/dna.routes";
 import autopilotRoutes from "./src/server/routes/autopilot.routes";
 import wabaRoutes from "./src/server/routes/waba.routes";
@@ -28,6 +29,7 @@ app.use(express.json());
 
 // Load Modular Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/ai", aiRoutes);
 app.use("/api/dna", dnaRoutes);
 app.use("/api/autopilot", autopilotRoutes);
 app.use("/api/waba", wabaRoutes);

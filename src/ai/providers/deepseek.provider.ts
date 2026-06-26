@@ -1,52 +1,42 @@
 import { AIProvider } from "./types";
+import axios from "axios";
 
 export class DeepSeekProvider implements AIProvider {
-    public readonly providerName = "deepseek";
-    public readonly modelName = "deepseek-chat";
-    public lastError: any = null;
-    private apiKey: string;
+    readonly providerName = "deepseek";
+    readonly modelName = "deepseek-chat";
 
-    constructor(apiKey: string) {
-        this.apiKey = apiKey;
-    }
+    async generateResponse(prompt: string, context: string): Promise<string> {
+        const apiKey = process.env.DEEPSEEK_API_KEY;
+        if (!apiKey) throw new Error("DEEPSEEK_OFFLINE");
 
-    async generateResponse(prompt: string, context: string = ""): Promise<string> {
         try {
-            const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${this.apiKey}`
-                },
-                body: JSON.stringify({
+            const response = await axios.post(
+                "https://api.deepseek.com/chat/completions",
+                {
                     model: this.modelName,
                     messages: [
-                        { role: "system", content: context || "You are Fiko Closer, a sales expert." },
+                        { role: "system", content: context },
                         { role: "user", content: prompt }
                     ],
-                    temperature: 0.7
-                })
-            });
+                    stream: false
+                },
+                {
+                    headers: {
+                        "Authorization": `Bearer ${apiKey}`,
+                        "Content-Type": "application/json"
+                    },
+                    timeout: 30000
+                }
+            );
 
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error?.message || "DeepSeek API Error");
-
-            this.lastError = null;
-            return data.choices[0].message.content;
+            return response.data.choices[0].message.content;
         } catch (error: any) {
-            this.lastError = { message: error.message, timestamp: new Date().toISOString() };
-            throw error;
+            console.error("DeepSeek Provider Error:", error.response?.data || error.message);
+            throw new Error(`DeepSeek API Error: ${error.message}`);
         }
     }
 
-    getLastError() { return this.lastError; }
-
     async verify(): Promise<boolean> {
-        try {
-            await this.generateResponse("ping", "test");
-            return true;
-        } catch (e) {
-            return false;
-        }
+        return !!process.env.DEEPSEEK_API_KEY;
     }
 }
