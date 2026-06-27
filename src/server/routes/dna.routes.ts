@@ -51,7 +51,6 @@ router.get("/score/:companyId", async (req, res) => {
             } catch (e) {}
         }
     } catch (e) {}
-    // Calculate score (25 facts = 100%)
     const score = Math.min(100, Math.round((total / 25) * 100));
     res.json({ score });
 });

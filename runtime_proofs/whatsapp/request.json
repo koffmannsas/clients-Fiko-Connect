@@ -1,1 +1,0 @@
-{"method": "POST", "url": "http://localhost:4000/api/webhooks/meta", "payload": {"object":"whatsapp_business_account","entry":[{"id":"123","changes":[{"value":{"messaging_product":"whatsapp","messages":[{"from":"22500","id":"test_id_1782553623","text":{"body":"ping"}}]}}]}]}}
