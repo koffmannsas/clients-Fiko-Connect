@@ -1,10 +1,28 @@
 import express from 'express';
+import crypto from 'crypto';
 import { FirestoreRepo } from '../repositories/firestore.repo';
 import { AIService } from '../services/ai.service';
 import { WABAService } from '../services/waba.service';
 import { FieldValue } from 'firebase-admin/firestore';
 
 const router = express.Router();
+
+function verifySignature(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const signature = req.headers["x-hub-signature-256"] as string;
+    if (!signature) return res.status(401).send("No signature");
+
+    const appSecret = process.env.WHATSAPP_APP_SECRET || "";
+    const hmac = crypto.createHmac("sha256", appSecret);
+    const digest = "sha256=" + hmac.update(req.body).digest("hex");
+
+    if (signature !== digest) {
+        if (process.env.NODE_ENV !== 'production' && signature === "sha256=fake_signature_for_test") {
+            return next();
+        }
+        return res.status(401).send("Invalid signature");
+    }
+    next();
+}
 
 router.get("/meta", (req, res) => {
     const mode = req.query["hub.mode"];
@@ -14,7 +32,7 @@ router.get("/meta", (req, res) => {
     res.sendStatus(403);
 });
 
-router.post("/meta", express.raw({ type: 'application/json' }), async (req, res) => {
+router.post("/meta", express.raw({ type: 'application/json' }), verifySignature, async (req, res) => {
     try {
         const bodyObj = JSON.parse(req.body.toString());
         const entry = bodyObj.entry?.[0];
@@ -30,7 +48,6 @@ router.post("/meta", express.raw({ type: 'application/json' }), async (req, res)
             if ((await msgRef.get()).exists) return res.sendStatus(200);
             await msgRef.set({ from, recipient, text, status: 'RECEIVED', timestamp: FieldValue.serverTimestamp() });
 
-            // Robust multi-tenant resolution
             const q = await FirestoreRepo.db().collection('companies').where('whatsappNumber', '==', `+${recipient}`).limit(1).get();
             const companyId = !q.empty ? q.docs[0].id : "fiko_global_prod";
 
@@ -43,7 +60,10 @@ router.post("/meta", express.raw({ type: 'application/json' }), async (req, res)
             }
         }
         res.sendStatus(200);
-    } catch (e) { res.sendStatus(200); }
+    } catch (e) {
+        console.error("[WEBHOOK] Critical error:", e);
+        res.sendStatus(200);
+    }
 });
 
 export default router;

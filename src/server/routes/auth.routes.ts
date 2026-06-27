@@ -14,6 +14,17 @@ router.post("/send-otp", async (req, res) => {
     const { phoneNumber, type, password, firstName, lastName, activity } = req.body;
     if (!phoneNumber) return res.status(400).json({ error: "Missing phone number" });
 
+    // For login, we should check if the password is correct before sending OTP
+    if (type === 'login') {
+        const companyId = `fiko_org_${phoneNumber.replace(/[^0-9]/g, '')}`;
+        const companySnap = await FirestoreRepo.db().collection('companies').doc(companyId).get();
+        if (!companySnap.exists) return res.status(404).json({ error: "Account not found" });
+
+        const companyData = companySnap.data();
+        const isMatch = await bcrypt.compare(password, companyData?.passwordHash || "");
+        if (!isMatch) return res.status(401).json({ error: "Invalid password" });
+    }
+
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = Timestamp.fromMillis(Date.now() + 5 * 60 * 1000);
 
@@ -29,7 +40,6 @@ router.post("/send-otp", async (req, res) => {
             otp, type, ...signupData, expiresAt
         });
 
-        // Industrial Strategy: Attempt real delivery via WABA, fallback to console for dev/emergency
         const cleanPhone = phoneNumber.replace(/[^0-9]/g, '');
         const message = `[Fiko Connect] Votre code de vérification est : ${otp}. Valide pendant 5 minutes.`;
 

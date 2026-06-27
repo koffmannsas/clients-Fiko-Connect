@@ -8,8 +8,8 @@ router.post("/generic", async (req, res) => {
     if (!companyId || !prompt) return res.status(400).json({ error: "Missing companyId or prompt" });
 
     try {
-        const { brain } = await import("../../ai/brain");
-        const response = await brain.generateGeneric(companyId, "admin", prompt, context || "Administrative Assistance");
+        const { orchestrator } = await import("../../ai/orchestrator/ai-orchestrator");
+        const response = await orchestrator.generateResponse(companyId, "admin", prompt, context || "Administrative Assistance");
         res.json({ response });
     } catch (e: any) {
         res.status(500).json({ error: e.message });

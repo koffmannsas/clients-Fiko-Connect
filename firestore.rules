@@ -1,18 +1,51 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isOwner(companyId) {
-      return request.auth != null && request.auth.uid == companyId;
+    // Multi-tenant Security: Users only access their own company data
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
     }
-    match /companies/{companyId} { allow read, write: if isOwner(companyId); }
-    match /leads/{leadId} { allow read, write: if request.auth != null && (resource == null || resource.data.companyId == request.auth.uid); }
-    match /messages/{messageId} { allow read, write: if request.auth != null && (resource == null || resource.data.companyId == request.auth.uid); }
-    match /fiko_memory/{companyId} { allow read, write: if isOwner(companyId); }
-    match /dna_products/{id} { allow read, write: if request.auth != null && resource.data.companyId == request.auth.uid; }
-    match /dna_pricing/{id} { allow read, write: if request.auth != null && resource.data.companyId == request.auth.uid; }
-    match /dna_objections/{id} { allow read, write: if request.auth != null && resource.data.companyId == request.auth.uid; }
-    match /dna_faq/{id} { allow read, write: if request.auth != null && resource.data.companyId == request.auth.uid; }
-    match /vault/{id} { allow read, write: if false; }
-    match /otp_sessions/{id} { allow read, write: if false; }
+
+    match /companies/{companyId} {
+      allow read, write: if request.auth != null && (
+        resource == null || resource.data.ownerId == request.auth.uid ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == companyId
+      );
+    }
+
+    match /subscriptions/{companyId} {
+      allow read: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == companyId;
+    }
+
+    match /leads/{leadId} {
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == resource.data.companyId;
+      allow create: if request.auth != null;
+    }
+
+    match /messages/{messageId} {
+      allow read: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == resource.data.companyId;
+      allow create: if request.auth != null;
+    }
+
+    match /audit_trail/{logId} {
+      allow read: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == resource.data.companyId;
+    }
+
+    match /fiko_memory/{companyId} {
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == companyId;
+    }
+
+    match /otp_sessions/{phone} {
+      allow read, write: if false; // Server-only
+    }
+
+    match /processed_messages/{msgId} {
+      allow read, write: if false; // Server-only idempotency
+    }
   }
 }

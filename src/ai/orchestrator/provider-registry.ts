@@ -8,12 +8,12 @@ export class ProviderRegistry {
     private providers: AIProvider[] = [];
 
     constructor() {
-        // V5.0 CERTIFIED PRIORITY
+        // V5.0 STRICT PRIORITY: DeepSeek -> Gemini -> OpenAI -> Fallback
         this.providers = [
-            new DeepSeekProvider(), // Priority 1
-            new GeminiProvider(),   // Priority 2
-            new OpenAIProvider(),   // Priority 3
-            new FallbackProvider()  // Disaster Recovery
+            new DeepSeekProvider(process.env.DEEPSEEK_API_KEY || "MISSING"),
+            new GeminiProvider(process.env.GOOGLE_GEMINI_API_KEY || "MISSING"),
+            new OpenAIProvider(process.env.OPENAI_API_KEY || "MISSING"),
+            new FallbackProvider()
         ];
     }
 

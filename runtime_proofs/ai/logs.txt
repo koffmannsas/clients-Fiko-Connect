@@ -1,0 +1,75 @@
+🚀 Starting AI Orchestrator Failover Certification...
+
+--- TEST 1: FAILOVER CHAIN VALIDATION ---
+[ORCHESTRATOR] Trying provider: deepseek
+(node:788016) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[ORCHESTRATOR] Provider deepseek failed: Authentication Fails, Your api key: ****SING is invalid
+[ORCHESTRATOR] Failed to log failure Error: Could not load the default credentials. Browse to https://cloud.google.com/docs/authentication/getting-started for more information.
+    at GoogleAuth.getApplicationDefaultAsync (/app/node_modules/google-gax/node_modules/google-auth-library/build/src/auth/googleauth.js:287:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async GoogleAuth._GoogleAuth_determineClient (/app/node_modules/google-gax/node_modules/google-auth-library/build/src/auth/googleauth.js:834:32)
+    at async GoogleAuth.getClient (/app/node_modules/google-gax/node_modules/google-auth-library/build/src/auth/googleauth.js:698:20)
+    at async GrpcClient._getCredentials (/app/node_modules/google-gax/src/grpc.ts:209:20)
+    at async GrpcClient.createStub (/app/node_modules/google-gax/src/grpc.ts:426:19)
+Caused by: Error
+    at _firestore._traceUtil.startActiveSpan (/app/node_modules/@google-cloud/firestore/build/src/write-batch.js:438:27)
+    at /app/node_modules/@google-cloud/firestore/build/src/telemetry/enabled-trace-util.js:110:30
+    at NoopContextManager.with (/app/node_modules/@opentelemetry/api/src/context/NoopContextManager.ts:20:15)
+    at ContextAPI.with (/app/node_modules/@opentelemetry/api/src/api/context.ts:68:42)
+    at NoopTracer.startActiveSpan (/app/node_modules/@opentelemetry/api/src/trace/NoopTracer.ts:87:27)
+    at ProxyTracer.startActiveSpan (/app/node_modules/@opentelemetry/api/src/trace/ProxyTracer.ts:51:20)
+    at EnabledTraceUtil.startActiveSpan (/app/node_modules/@google-cloud/firestore/build/src/telemetry/enabled-trace-util.js:102:28)
+    at WriteBatch.commit (/app/node_modules/@google-cloud/firestore/build/src/write-batch.js:436:43)
+    at /app/node_modules/@google-cloud/firestore/build/src/reference/document-reference.js:273:18
+    at /app/node_modules/@google-cloud/firestore/build/src/telemetry/enabled-trace-util.js:110:30
+[ORCHESTRATOR] Trying provider: gemini
+[ORCHESTRATOR] Provider gemini failed: [GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent: [400 Bad Request] API key not valid. Please pass a valid API key. [{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID","domain":"googleapis.com","metadata":{"service":"generativelanguage.googleapis.com"}},{"@type":"type.googleapis.com/google.rpc.LocalizedMessage","locale":"en-US","message":"API key not valid. Please pass a valid API key."}]
+[ORCHESTRATOR] Failed to log failure Error: Could not load the default credentials. Browse to https://cloud.google.com/docs/authentication/getting-started for more information.
+    at GoogleAuth.getApplicationDefaultAsync (/app/node_modules/google-gax/node_modules/google-auth-library/build/src/auth/googleauth.js:287:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async GoogleAuth._GoogleAuth_determineClient (/app/node_modules/google-gax/node_modules/google-auth-library/build/src/auth/googleauth.js:834:32)
+    at async GoogleAuth.getClient (/app/node_modules/google-gax/node_modules/google-auth-library/build/src/auth/googleauth.js:698:20)
+    at async GrpcClient._getCredentials (/app/node_modules/google-gax/src/grpc.ts:209:20)
+    at async GrpcClient.createStub (/app/node_modules/google-gax/src/grpc.ts:426:19)
+Caused by: Error
+    at _firestore._traceUtil.startActiveSpan (/app/node_modules/@google-cloud/firestore/build/src/write-batch.js:438:27)
+    at /app/node_modules/@google-cloud/firestore/build/src/telemetry/enabled-trace-util.js:110:30
+    at NoopContextManager.with (/app/node_modules/@opentelemetry/api/src/context/NoopContextManager.ts:20:15)
+    at ContextAPI.with (/app/node_modules/@opentelemetry/api/src/api/context.ts:68:42)
+    at NoopTracer.startActiveSpan (/app/node_modules/@opentelemetry/api/src/trace/NoopTracer.ts:87:27)
+    at ProxyTracer.startActiveSpan (/app/node_modules/@opentelemetry/api/src/trace/ProxyTracer.ts:51:20)
+    at EnabledTraceUtil.startActiveSpan (/app/node_modules/@google-cloud/firestore/build/src/telemetry/enabled-trace-util.js:102:28)
+    at WriteBatch.commit (/app/node_modules/@google-cloud/firestore/build/src/write-batch.js:436:43)
+    at /app/node_modules/@google-cloud/firestore/build/src/reference/document-reference.js:273:18
+    at /app/node_modules/@google-cloud/firestore/build/src/telemetry/enabled-trace-util.js:110:30
+[ORCHESTRATOR] Trying provider: openai
+[ORCHESTRATOR] Provider openai failed: Incorrect API key provided: MISSING. You can find your API key at https://platform.openai.com/account/api-keys.
+[ORCHESTRATOR] Failed to log failure Error: Could not load the default credentials. Browse to https://cloud.google.com/docs/authentication/getting-started for more information.
+    at GoogleAuth.getApplicationDefaultAsync (/app/node_modules/google-gax/node_modules/google-auth-library/build/src/auth/googleauth.js:287:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async GoogleAuth._GoogleAuth_determineClient (/app/node_modules/google-gax/node_modules/google-auth-library/build/src/auth/googleauth.js:834:32)
+    at async GoogleAuth.getClient (/app/node_modules/google-gax/node_modules/google-auth-library/build/src/auth/googleauth.js:698:20)
+    at async GrpcClient._getCredentials (/app/node_modules/google-gax/src/grpc.ts:209:20)
+    at async GrpcClient.createStub (/app/node_modules/google-gax/src/grpc.ts:426:19)
+Caused by: Error
+    at _firestore._traceUtil.startActiveSpan (/app/node_modules/@google-cloud/firestore/build/src/write-batch.js:438:27)
+    at /app/node_modules/@google-cloud/firestore/build/src/telemetry/enabled-trace-util.js:110:30
+    at NoopContextManager.with (/app/node_modules/@opentelemetry/api/src/context/NoopContextManager.ts:20:15)
+    at ContextAPI.with (/app/node_modules/@opentelemetry/api/src/api/context.ts:68:42)
+    at NoopTracer.startActiveSpan (/app/node_modules/@opentelemetry/api/src/trace/NoopTracer.ts:87:27)
+    at ProxyTracer.startActiveSpan (/app/node_modules/@opentelemetry/api/src/trace/ProxyTracer.ts:51:20)
+    at EnabledTraceUtil.startActiveSpan (/app/node_modules/@google-cloud/firestore/build/src/telemetry/enabled-trace-util.js:102:28)
+    at WriteBatch.commit (/app/node_modules/@google-cloud/firestore/build/src/write-batch.js:436:43)
+    at /app/node_modules/@google-cloud/firestore/build/src/reference/document-reference.js:273:18
+    at /app/node_modules/@google-cloud/firestore/build/src/telemetry/enabled-trace-util.js:110:30
+[ORCHESTRATOR] Trying provider: fallback
+✅ Final Chain Response: Bonjour 👋
+
+Je traite actuellement un volume élevé de demandes.
+
+Votre message a bien été reçu et un conseiller FiKO vous répondra dans quelques instants.
+
+--- TEST 2: PRIORITY LIST VERIFICATION ---
+✅ Priority List: deepseek -> gemini -> openai -> fallback
+✅ Industrial Priority Match: DeepSeek is Priority #1

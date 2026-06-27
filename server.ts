@@ -39,8 +39,12 @@ app.get("/health", (req, res) => res.json({ status: "ok", version: "5.0-phoenix"
 app.get("/api/market-insights", async (req, res) => {
     // Direct access to DB for simple GETs to avoid over-engineering initial modularity
     const { getFirestore } = await import('firebase-admin/firestore');
-    const snap = await getFirestore().collection('market_insights').limit(10).get();
-    res.json(snap.docs.map(d => d.data()));
+    try {
+        const snap = await getFirestore().collection('market_insights').limit(10).get();
+        res.json(snap.docs.map(d => d.data()));
+    } catch (e) {
+        res.json([]);
+    }
 });
 
 // Production SPA Serving
