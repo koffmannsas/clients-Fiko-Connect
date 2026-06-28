@@ -19,16 +19,6 @@ export class MonitoringService {
     }));
   }
 
-  static logMetric(name: string, value: number, tags: Record<string, string> = {}) {
-    console.log(JSON.stringify({
-        type: 'METRIC',
-        name,
-        value,
-        ...tags,
-        timestamp: new Date().toISOString()
-    }));
-  }
-
   static logError(context: string, error: any) {
     console.error(JSON.stringify({
         type: 'ERROR',
@@ -37,16 +27,5 @@ export class MonitoringService {
         stack: error.stack,
         timestamp: new Date().toISOString()
     }));
-  }
-
-  static async getSystemStats() {
-    const os = await import('os');
-    return {
-        uptime: os.uptime(),
-        freeMem: os.freemem(),
-        totalMem: os.totalmem(),
-        loadAvg: os.loadavg(),
-        processMem: process.memoryUsage()
-    };
   }
 }

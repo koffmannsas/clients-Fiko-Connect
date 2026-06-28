@@ -3,6 +3,7 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
+import { SentinelEngine } from "./src/server/operation-center/sentinel.engine";
 
 // Routes
 import authRoutes from "./src/server/routes/auth.routes";
@@ -22,6 +23,9 @@ if (!getApps().length) {
 }
 
 const app = express();
+
+// Start Sentinel Engine
+SentinelEngine.start();
 
 // Middlewares
 app.use("/api/webhooks", webhookRoutes); // Raw body needed inside for signatures
