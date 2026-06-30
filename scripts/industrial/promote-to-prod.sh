@@ -1,34 +1,25 @@
 #!/bin/bash
-# KCG CLOUD - PRODUCTION PROMOTION SCRIPT V2 (SENTINEL ENFORCED)
-set -e
+# KCG CLOUD - PRODUCTION PROMOTION GATE V3 (ABSOLUTE TRUTH ENFORCED)
+# "Trust Nothing. Verify Everything."
 
-echo "🛡️ Starting SENTINEL Promotion Gate..."
-
-# 1. Check Live Health via Sentinel Engine
-HEALTH=$(curl -s http://localhost:4000/health)
-if [[ $HEALTH != *"5.0-phoenix"* ]]; then
-  echo "❌ PROMOTION BLOCKED: Current system health is not 100%."
+# 1. 100% Health & API Verification
+curl -s http://localhost:4000/health | grep -q "5.0-phoenix"
+if [ $? -ne 0 ]; then
+  echo "❌ Gate Failed: System Health degraded."
   exit 1
 fi
 
-echo "✅ Sentinel Health Check: PASS"
+# 2. Executable Certification Suite
+./scripts/certification/full-certification.sh
+if [ $? -ne 0 ]; then
+  echo "❌ Gate Failed: Certification suite failed."
+  exit 1
+fi
 
-# 2. Run full Gold Master Certification
-./verify_gold_master.sh GOLD_MASTER
+echo "✅ GATE CLEARED. Promoting RC to PRODUCTION..."
 
-# 3. Build Production Bundle
+# 3. Build & Deploy
 npm run build
-
-# 4. Create Manifest
-npx tsx scripts/certification/generate-manifest.ts
-
-# 5. Git Tagging & Promotion
-VERSION=$(node -p "require('./package.json').version")
-TAG="v${VERSION}-RC-SENTINEL"
-echo "Creating tag $TAG..."
-
-# 6. Production Restart
 pm2 restart scripts/industrial/pm2-config.cjs --only fiko-connect-prod
 
-echo "🚀 SUPREME GO-LIVE SUCCESSFUL (Sentinel Certified)"
-pm2 status fiko-connect-prod
+echo "🚀 PROMOTION SUCCESSFUL. Live at app.fiko-connect.kcg-cloud.com"

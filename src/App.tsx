@@ -17,8 +17,7 @@ import {
   Menu,
   X,
   Globe,
-  BrainCircuit,
-  Shield
+  BrainCircuit
 } from 'lucide-react';
 import { AuthService } from './services/auth.service';
 
@@ -33,7 +32,6 @@ const AfricaIntelligenceModule = lazy(() => import('./components/AfricaIntellige
 const PaymentsModule = lazy(() => import('./components/Payments'));
 const AnalyticsModule = lazy(() => import('./components/Analytics'));
 const QuantumGate = lazy(() => import('./components/QuantumGate'));
-const OperationCenter = lazy(() => import('./components/OperationCenter').then(m => ({ default: m.OperationCenter })));
 
 export default function App() {
   const [view, setView] = useState<'quantum' | 'dashboard' | 'loading'>('loading');
@@ -66,7 +64,6 @@ export default function App() {
     { name: 'Payments', icon: CreditCard },
     { name: 'Analytics', icon: BarChart3 },
     { name: 'Settings', icon: Settings },
-    { name: 'Operation Center', icon: Shield },
     { name: 'Admin', icon: ShieldCheck },
   ];
 
@@ -111,7 +108,7 @@ export default function App() {
           FIKO<span className="text-[#E10600]">.</span>
         </h2>
         
-        <ul className="space-y-1.5 flex-1 mt-12 lg:mt-0 overflow-y-auto">
+        <ul className="space-y-1.5 flex-1 mt-12 lg:mt-0">
           {menuItems.map((item) => (
             <li
               key={item.name}
@@ -152,7 +149,6 @@ export default function App() {
           {activeItem === 'Payments' && <PaymentsModule />}
           {activeItem === 'Analytics' && <AnalyticsModule />}
           {activeItem === 'Admin' && <AdminPanel />}
-          {activeItem === 'Operation Center' && <OperationCenter />}
           {activeItem === 'Settings' && <div className="p-8 bg-zinc-950 border border-zinc-900 rounded-3xl text-gray-500 font-mono text-xs">PROCHAINEMENT...</div>}
         </Suspense>
       </div>

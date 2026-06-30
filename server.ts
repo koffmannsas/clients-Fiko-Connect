@@ -3,7 +3,6 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
-import { SentinelEngine } from "./src/server/operation-center/sentinel.engine";
 
 // Routes
 import authRoutes from "./src/server/routes/auth.routes";
@@ -24,9 +23,6 @@ if (!getApps().length) {
 
 const app = express();
 
-// Start Sentinel Engine
-SentinelEngine.start();
-
 // Middlewares
 app.use("/api/webhooks", webhookRoutes); // Raw body needed inside for signatures
 app.use(express.json());
@@ -43,12 +39,8 @@ app.get("/health", (req, res) => res.json({ status: "ok", version: "5.0-phoenix"
 app.get("/api/market-insights", async (req, res) => {
     // Direct access to DB for simple GETs to avoid over-engineering initial modularity
     const { getFirestore } = await import('firebase-admin/firestore');
-    try {
-        const snap = await getFirestore().collection('market_insights').limit(10).get();
-        res.json(snap.docs.map(d => d.data()));
-    } catch (e) {
-        res.json([]);
-    }
+    const snap = await getFirestore().collection('market_insights').limit(10).get();
+    res.json(snap.docs.map(d => d.data()));
 });
 
 // Production SPA Serving

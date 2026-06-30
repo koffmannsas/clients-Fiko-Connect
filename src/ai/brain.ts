@@ -40,10 +40,49 @@ export class FikoBrain {
         LANGUES : Réponds toujours dans la langue du client (Français, Anglais, Espagnol, Portugais).
         `;
 
-        const prompt = `Tu es FIKO CLOSER ELITE.${historyPrompt}\n${marketInstructions}\n\nContexte Business: ${businessContext}\nMessage Client: "${message}"\n\nRéponds de manière stratégique pour amener à la vente ou à la qualification.`;
+        // --- LONG TERM MEMORY FETCH ---
+        let ltmContext = "";
+        try {
+            const memorySnap = await db.collection('fiko_memory').doc(companyId).get();
+            const ltm = memorySnap.data()?.longTermMemory || {};
+            if (ltm[leadId]) {
+                ltmContext = `\nRésumé de la relation avec ce client: ${ltm[leadId]}\n`;
+            }
+        } catch (e) {
+            console.error("[FikoBrain] LTM fetch error:", e);
+        }
+
+        // --- LEAD SCORING & QUALIFICATION ---
+        let qualificationContext = "";
+        if (leadId !== "system_ltm") {
+            try {
+                const scoringPrompt = `ANALYSE DE QUALIFICATION. Client: "${message}".
+                Donne un score de 0 à 100 sur l'intention d'achat et identifie le besoin principal.
+                JSON uniquement: { "score": 80, "need": "...", "objection": "..." }`;
+                const scoringRaw = await orchestrator.generateResponse(companyId, "scorer", scoringPrompt, "Lead Scorer");
+                const scoring = JSON.parse(scoringRaw.replace(/```json|```/g, '').trim());
+                qualificationContext = `\n[INTERNAL] Lead Score: ${scoring.score}/100. Besoin: ${scoring.need}. Objection: ${scoring.objection}\n`;
+
+                // Persist score
+                await db.collection('leads').doc(`${companyId}_${leadId}`).set({
+                    qualificationScore: scoring.score,
+                    detectedNeed: scoring.need,
+                    lastObjection: scoring.objection
+                }, { merge: true });
+            } catch (e) {
+                console.warn("[FikoBrain] Scorer failed", e);
+            }
+        }
+
+        const prompt = `Tu es FIKO CLOSER ELITE.${historyPrompt}${ltmContext}${qualificationContext}\n${marketInstructions}\n\nContexte Business: ${businessContext}\nMessage Client: "${message}"\n\nRéponds de manière stratégique pour amener à la vente ou à la qualification.`;
 
         try {
-            return await orchestrator.generateResponse(companyId, leadId, prompt, businessContext);
+            const response = await orchestrator.generateResponse(companyId, leadId, prompt, businessContext);
+
+            // --- ASYNC SUMMARIZATION (LTM UPDATE) ---
+            this.updateLTM(companyId, leadId, message, response).catch(console.error);
+
+            return response;
         } catch (error: any) {
             console.error(`[FikoBrain] Orchestrator fatal failure: ${error.message}`);
             return "Bonjour 👋 Un conseiller FiKO vous répondra dans quelques instants.";
@@ -56,6 +95,24 @@ export class FikoBrain {
         } catch (error: any) {
             console.error(`[FikoBrain] Generic prompt failed: ${error.message}`);
             throw error;
+        }
+    }
+
+    private async updateLTM(companyId: string, leadId: string, message: string, response: string) {
+        const db = getFirestore();
+        const memoryRef = db.collection('fiko_memory').doc(companyId);
+
+        const summaryPrompt = `Fais un résumé ultra-court (1 phrase) de cet échange pour la mémoire à long terme. Client: "${message}" -> Assistant: "${response}"`;
+
+        try {
+            const summary = await orchestrator.generateResponse(companyId, "system_ltm", summaryPrompt, "Summarizer");
+            await memoryRef.set({
+                longTermMemory: {
+                    [leadId]: summary
+                }
+            }, { merge: true });
+        } catch (e) {
+            console.error("[FikoBrain] LTM Update failed:", e);
         }
     }
 

@@ -8,8 +8,17 @@ router.post("/generic", async (req, res) => {
     if (!companyId || !prompt) return res.status(400).json({ error: "Missing companyId or prompt" });
 
     try {
-        const { orchestrator } = await import("../../ai/orchestrator/ai-orchestrator");
-        const response = await orchestrator.generateResponse(companyId, "admin", prompt, context || "Administrative Assistance");
+        const { brain } = await import("../../ai/brain");
+        const response = await brain.generateGeneric(companyId, "admin", prompt, context || "Administrative Assistance");
+
+        // Attempt to parse if it looks like JSON
+        try {
+            if (typeof response === 'string' && (response.trim().startsWith('{') || response.trim().startsWith('```json'))) {
+                const cleaned = response.replace(/```json|```/g, '').trim();
+                return res.json(JSON.parse(cleaned));
+            }
+        } catch (pe) {}
+
         res.json({ response });
     } catch (e: any) {
         res.status(500).json({ error: e.message });
@@ -17,10 +26,19 @@ router.post("/generic", async (req, res) => {
 });
 
 router.post("/chat", async (req, res) => {
-    const { companyId, leadId, message } = req.body;
-    if (!companyId || !leadId || !message) return res.status(400).json({ error: "Missing fields" });
+    const { companyId, leadId, message, history } = req.body;
+    if (!companyId || !leadId) return res.status(400).json({ error: "Missing fields" });
 
     try {
+        if (history) {
+            // High-level analysis
+            const { brain } = await import("../../ai/brain");
+            const prompt = `Analyses cette conversation. JSON uniquement: { "summary": "...", "sentiment": "positive"|"neutral"|"negative", "objections": ["..."], "recommendedAction": "..." } History: ${JSON.stringify(history)}`;
+            const raw = await brain.generateGeneric(companyId, leadId, prompt, "Conversation Analyst");
+            const cleaned = raw.replace(/```json|```/g, '').trim();
+            return res.json(JSON.parse(cleaned));
+        }
+
         const response = await AIService.generateResponse(companyId, leadId, message);
         res.json({ response });
     } catch (e: any) {

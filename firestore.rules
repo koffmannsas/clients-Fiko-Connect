@@ -47,5 +47,14 @@ service cloud.firestore {
     match /processed_messages/{msgId} {
       allow read, write: if false; // Server-only idempotency
     }
+
+    match /locks/{msgId} {
+      allow read, write: if false; // Server-only locking
+    }
+
+    match /user_profiles/{profileId} {
+      allow read: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == resource.data.companyId;
+    }
   }
 }

@@ -4,6 +4,16 @@ import { FieldValue } from 'firebase-admin/firestore';
 
 export class WABAService {
     static async sendMessage(companyId: string, to: string, text: string) {
+        // --- QUOTA CHECK ---
+        const subSnap = await FirestoreRepo.db().collection('subscriptions').doc(companyId).get();
+        if (subSnap.exists) {
+            const sub = subSnap.data();
+            if ((sub?.messagesSent || 0) >= (sub?.maxMessages || 100)) {
+                console.warn(`[WABA] Quota exceeded for company: ${companyId}`);
+                return false;
+            }
+        }
+
         const vault = await FirestoreRepo.getVault(companyId);
         const company = await FirestoreRepo.getCompany(companyId);
 
@@ -22,6 +32,10 @@ export class WABAService {
                 wa_id: res.data.messages[0].id,
                 timestamp: FieldValue.serverTimestamp()
             });
+
+            // Increment usage
+            await FirestoreRepo.recordUsage(companyId, text.length / 4); // Estimating tokens roughly
+
             return true;
         } catch (e) {
             console.error("[WABA] Send error:", e);
