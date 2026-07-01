@@ -3,7 +3,7 @@ import { FirestoreRepo } from '../repositories/firestore.repo';
 import { FieldValue } from 'firebase-admin/firestore';
 
 export class WABAService {
-    static async sendMessage(companyId: string, to: string, text: string) {
+    static async sendMessage(companyId: string, to: string, payload: any) {
         // --- QUOTA CHECK ---
         const subSnap = await FirestoreRepo.db().collection('subscriptions').doc(companyId).get();
         if (subSnap.exists) {
@@ -22,19 +22,39 @@ export class WABAService {
 
         if (!token || !phoneId) return false;
 
+        // Normalize payload: if string, convert to text object
+        const finalPayload = typeof payload === 'string' ? {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to,
+            type: "text",
+            text: { body: payload }
+        } : {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to,
+            ...payload
+        };
+
         try {
-            const res = await axios.post(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
-                messaging_product: "whatsapp", recipient_type: "individual", to, type: "text", text: { body: text }
-            }, { headers: { Authorization: `Bearer ${token}` } });
+            const res = await axios.post(`https://graph.facebook.com/v21.0/${phoneId}/messages`, finalPayload, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            const textForLog = typeof payload === 'string' ? payload : JSON.stringify(payload);
 
             await FirestoreRepo.db().collection('messages').add({
-                companyId, to, text, direction: 'OUTBOUND',
+                companyId, to,
+                text: textForLog,
+                direction: 'OUTBOUND',
                 wa_id: res.data.messages[0].id,
                 timestamp: FieldValue.serverTimestamp()
             });
 
             // Increment usage
-            await FirestoreRepo.recordUsage(companyId, text.length / 4); // Estimating tokens roughly
+            await FirestoreRepo.db().collection('subscriptions').doc(companyId).update({
+                messagesSent: FieldValue.increment(1)
+            });
 
             return true;
         } catch (e) {

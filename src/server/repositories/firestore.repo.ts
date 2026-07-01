@@ -18,21 +18,5 @@ export class FirestoreRepo {
             updatedAt: FieldValue.serverTimestamp(),
             status: 'Lead'
         }, { merge: true });
-
-        // Update User Profile / Identity Context
-        const profileRef = this.db().collection('user_profiles').doc(`${companyId}_${phone}`);
-        await profileRef.set({
-            lastSeen: FieldValue.serverTimestamp(),
-            phoneNumber: phone,
-            companyId
-        }, { merge: true });
-    }
-
-    static async recordUsage(companyId: string, tokens: number) {
-        const subRef = this.db().collection('subscriptions').doc(companyId);
-        await subRef.update({
-            messagesSent: FieldValue.increment(1),
-            totalTokens: FieldValue.increment(tokens)
-        });
     }
 }

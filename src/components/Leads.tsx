@@ -42,7 +42,7 @@ export default function LeadsModule({ onboardingData }: { onboardingData: any })
     );
 
     const unsubscribe = onSnapshot(q, (snap) => {
-      setLeads(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLeads(snap.docs.map(d => ({ id: doc.id, ...d.data() })));
       setLoading(false);
     });
 

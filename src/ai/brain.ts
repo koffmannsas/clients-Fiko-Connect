@@ -40,47 +40,64 @@ export class FikoBrain {
         LANGUES : Réponds toujours dans la langue du client (Français, Anglais, Espagnol, Portugais).
         `;
 
-        // --- LONG TERM MEMORY FETCH ---
+        // --- V6.0 SEMANTIC RETRIEVAL & LTM ---
         let ltmContext = "";
         try {
             const memorySnap = await db.collection('fiko_memory').doc(companyId).get();
             const ltm = memorySnap.data()?.longTermMemory || {};
             if (ltm[leadId]) {
-                ltmContext = `\nRésumé de la relation avec ce client: ${ltm[leadId]}\n`;
+                ltmContext = `\nRésumé relation client: ${ltm[leadId]}\n`;
             }
+
+            // Knowledge Graph Injection
+            const kg = memorySnap.data()?.knowledgeGraph || {};
+            if (kg.products?.length) ltmContext += `\nProduits connus: ${kg.products.join(", ")}`;
         } catch (e) {
             console.error("[FikoBrain] LTM fetch error:", e);
         }
 
-        // --- LEAD SCORING & QUALIFICATION ---
-        let qualificationContext = "";
-        if (leadId !== "system_ltm") {
+        // --- V6.0 FIKO CLOSER™ STRATEGIC ENGINE ---
+        let closerContext = "";
+        if (!leadId.includes("system")) {
             try {
-                const scoringPrompt = `ANALYSE DE QUALIFICATION. Client: "${message}".
-                Donne un score de 0 à 100 sur l'intention d'achat et identifie le besoin principal.
-                JSON uniquement: { "score": 80, "need": "...", "objection": "..." }`;
-                const scoringRaw = await orchestrator.generateResponse(companyId, "scorer", scoringPrompt, "Lead Scorer");
-                const scoring = JSON.parse(scoringRaw.replace(/```json|```/g, '').trim());
-                qualificationContext = `\n[INTERNAL] Lead Score: ${scoring.score}/100. Besoin: ${scoring.need}. Objection: ${scoring.objection}\n`;
+                const closerPrompt = `FIKO CLOSER ELITE - STRATEGIC ANALYSIS.
+                Message: "${message}"
+                Context: BANT/MEDDICC qualification.
+                Tâches:
+                1. Qualifier (Score 0-100)
+                2. Intention (Score 0-100)
+                3. Prochaine Action (Next Best Action)
+                4. Objection Critique Détectée
+                5. Stratégie de Closing recommandée
+                JSON: { "score": 0, "intent": 0, "nba": "", "objection": "", "strategy": "" }`;
 
-                // Persist score
+                const raw = await orchestrator.generateResponse(companyId, "closer_engine", closerPrompt, "Closer Strategic Analyst");
+                const closer = JSON.parse(raw.replace(/```json|```/g, '').trim());
+
+                closerContext = `\n[STRATÉGIE CLOSER]:
+                - NBA: ${closer.nba}
+                - STRATÉGIE: ${closer.strategy}
+                - OBJECTION: ${closer.objection || 'Aucune'}\n`;
+
                 await db.collection('leads').doc(`${companyId}_${leadId}`).set({
-                    qualificationScore: scoring.score,
-                    detectedNeed: scoring.need,
-                    lastObjection: scoring.objection
+                    qualificationScore: closer.score,
+                    buyingIntent: closer.intent,
+                    nextBestAction: closer.nba,
+                    closingStrategy: closer.strategy,
+                    criticalObjection: closer.objection
                 }, { merge: true });
             } catch (e) {
-                console.warn("[FikoBrain] Scorer failed", e);
+                console.warn("[FikoBrain] Closer Engine failed", e);
             }
         }
 
-        const prompt = `Tu es FIKO CLOSER ELITE.${historyPrompt}${ltmContext}${qualificationContext}\n${marketInstructions}\n\nContexte Business: ${businessContext}\nMessage Client: "${message}"\n\nRéponds de manière stratégique pour amener à la vente ou à la qualification.`;
+        const prompt = `Tu es FIKO CLOSER ELITE.${historyPrompt}${ltmContext}${closerContext}\n${marketInstructions}\n\nContexte Business: ${businessContext}\nMessage Client: "${message}"\n\nRéponds de manière stratégique pour amener à la vente ou à la qualification.`;
 
         try {
             const response = await orchestrator.generateResponse(companyId, leadId, prompt, businessContext);
 
-            // --- ASYNC SUMMARIZATION (LTM UPDATE) ---
-            this.updateLTM(companyId, leadId, message, response).catch(console.error);
+            // --- ASYNC OMEGA CONVERGENCE (Memory & Learning) ---
+            this.processOmegaLearning(companyId, leadId, message, response).catch(console.error);
 
             return response;
         } catch (error: any) {
@@ -98,21 +115,52 @@ export class FikoBrain {
         }
     }
 
-    private async updateLTM(companyId: string, leadId: string, message: string, response: string) {
+    private async processOmegaLearning(companyId: string, leadId: string, message: string, response: string) {
         const db = getFirestore();
         const memoryRef = db.collection('fiko_memory').doc(companyId);
 
-        const summaryPrompt = `Fais un résumé ultra-court (1 phrase) de cet échange pour la mémoire à long terme. Client: "${message}" -> Assistant: "${response}"`;
+        const learningPrompt = `ANALYSE OMEGA.
+        Échange: Client: "${message}" -> Assistant: "${response}"
+        Tâches:
+        1. Résumé LTM (1 phrase)
+        2. Extraction Knowledge Graph (Produits, Prix, Objections)
+        3. Sentiment (score 0-100)
+        4. Intention d'achat (score 0-100)
+        JSON: { "summary": "", "kg": { "products": [], "pricing": [], "objections": [] }, "sentiment": 50, "intent": 50 }`;
 
         try {
-            const summary = await orchestrator.generateResponse(companyId, "system_ltm", summaryPrompt, "Summarizer");
+            const raw = await orchestrator.generateResponse(companyId, "omega_learner", learningPrompt, "Omega Learner");
+            const data = JSON.parse(raw.replace(/```json|```/g, '').trim());
+
+            const currentMem = (await memoryRef.get()).data() || {};
+            const existingKg = currentMem.knowledgeGraph || { products: [], pricing: [], objections: [] };
+
+            // Knowledge Graph Merger
+            const updatedKg = {
+                products: Array.from(new Set([...existingKg.products, ...(data.kg.products || [])])),
+                pricing: Array.from(new Set([...existingKg.pricing, ...(data.kg.pricing || [])])),
+                objections: Array.from(new Set([...existingKg.objections, ...(data.kg.objections || [])]))
+            };
+
             await memoryRef.set({
                 longTermMemory: {
-                    [leadId]: summary
-                }
+                    ...(currentMem.longTermMemory || {}),
+                    [leadId]: data.summary
+                },
+                knowledgeGraph: updatedKg,
+                lastOmegaUpdate: FieldValue.serverTimestamp()
             }, { merge: true });
+
+            // Lead Profile Industrialization
+            await db.collection('leads').doc(`${companyId}_${leadId}`).set({
+                sentimentScore: data.sentiment,
+                buyingIntent: data.intent,
+                lastSummary: data.summary,
+                updatedAt: FieldValue.serverTimestamp()
+            }, { merge: true });
+
         } catch (e) {
-            console.error("[FikoBrain] LTM Update failed:", e);
+            console.error("[FikoBrain] Omega Learning failed:", e);
         }
     }
 

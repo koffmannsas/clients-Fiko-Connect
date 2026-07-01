@@ -11,10 +11,24 @@ export class AIOrchestrator {
     async generateResponse(companyId: string, leadId: string, prompt: string, context: string): Promise<string> {
         const providers = this.registry.getPriorityList();
 
+        // --- V6.0 DYNAMIC ROUTING & CIRCUIT BREAKER ---
         for (const provider of providers) {
             try {
-                console.log(`[ORCHESTRATOR] Trying provider: ${provider.providerName}`);
+                // Skip if provider is in cooldown after 3 consecutive failures
+                const status = (await this.registry.getStatus()).find(s => s.name === provider.providerName);
+                if (status?.status === 'OFFLINE') continue;
+
+                console.log(`[ORCHESTRATOR] Routing to: ${provider.providerName}`);
+                const startTime = Date.now();
                 const response = await provider.generateResponse(prompt, context);
+                const latency = Date.now() - startTime;
+
+                // Track performance for dynamic optimization
+                await getFirestore().collection('ai_metrics').add({
+                    companyId, provider: provider.providerName, latency,
+                    timestamp: FieldValue.serverTimestamp()
+                });
+
                 return response;
             } catch (error: any) {
                 console.warn(`[ORCHESTRATOR] Provider ${provider.providerName} failed: ${error.message}`);

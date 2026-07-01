@@ -1,39 +1,33 @@
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
-
-export interface ExecutionProof {
-    timestamp: string;
-    gitCommit: string;
-    branch: string;
-    durationMs: number;
-    exitCode: number;
-    logs: string;
-    hash: string;
-    status: 'PASS' | 'FAIL';
-}
 
 export class ExecutionProofEngine {
-    private static PROOF_DIR = 'runtime_proofs';
-
-    static async recordProof(testName: string, data: Partial<ExecutionProof>) {
-        const targetDir = path.join(this.PROOF_DIR, testName);
-        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-
-        const proof: ExecutionProof = {
+    static async generateProof(testName: string, request: any, response: any, status: 'PASS' | 'FAIL') {
+        const proof = {
+            testName,
             timestamp: new Date().toISOString(),
-            gitCommit: process.env.GIT_COMMIT || 'unknown',
-            branch: process.env.GIT_BRANCH || 'main',
-            durationMs: data.durationMs || 0,
-            exitCode: data.exitCode ?? 0,
-            logs: data.logs || '',
-            status: data.status || 'FAIL',
-            hash: ''
+            status,
+            request,
+            response,
+            nodeVersion: process.version,
+            platform: process.platform
         };
 
-        proof.hash = crypto.createHash('sha256').update(JSON.stringify(proof)).digest('hex');
+        // 1. Immutable Audit Trail in Firestore
+        const db = getFirestore();
+        await db.collection('certification_proofs').add({
+            ...proof,
+            serverTimestamp: FieldValue.serverTimestamp()
+        });
 
-        fs.writeFileSync(path.join(targetDir, 'proof.json'), JSON.stringify(proof, null, 2));
-        return proof;
+        // 2. Local Evidence File for CI/CD
+        const proofDir = path.join(process.cwd(), 'runtime_proofs');
+        if (!fs.existsSync(proofDir)) fs.mkdirSync(proofDir);
+
+        const fileName = `proof_${testName.toLowerCase().replace(/ /g, '_')}_${Date.now()}.json`;
+        fs.writeFileSync(path.join(proofDir, fileName), JSON.stringify(proof, null, 2));
+
+        console.log(`[PROOF] Evidence generated: ${fileName}`);
     }
 }
