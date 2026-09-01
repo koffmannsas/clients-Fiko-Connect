@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import { bootstrapEnv } from "./src/env-init";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
@@ -260,6 +261,8 @@ async function handleIncomingMessage(phone: string, content: string) {
 }
 
 async function startServer() {
+  await bootstrapEnv();
+
   const app = express();
   app.use(express.json());
 
