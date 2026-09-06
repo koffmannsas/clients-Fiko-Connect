@@ -4,6 +4,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { bootstrapEnv } from "./src/env-init";
 import { WABAService } from "./src/services/waba.service";
+import { KnowledgeBaseService } from "./src/services/knowledge-base.service";
+import { SubscriptionService, PLAN_CONFIGS, PlanTier } from "./src/services/subscription.service";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
@@ -244,11 +246,30 @@ async function handleIncomingMessage(phone: string, content: string) {
 
     // 2. Manage Lead & AI Reply
     const leadDoc = await leadRef.get();
-    let history = leadDoc.exists ? leadDoc.data()?.history || [] : [];
-    
+    const isLeadDocPresent = leadDoc.exists === true;
+    let history = isLeadDocPresent ? leadDoc.data()?.history || [] : [];
+    const companyId = isLeadDocPresent ? leadDoc.data()?.companyId || 'default_company' : 'default_company';
+
+    // Verify Subscription Server-side Access
+    const subRef = db.collection('subscriptions').doc(companyId);
+    const subSnap = await subRef.get();
+    if (subSnap.exists === true) {
+      const subData = subSnap.data();
+      const trialEndsAt = subData && subData.trialEndsAt ? new Date(subData.trialEndsAt).getTime() : 0;
+      const status = subData ? subData.status : undefined;
+      const plan = subData ? subData.plan : undefined;
+      if (status === 'EXPIRED' || (plan === 'starter' && trialEndsAt > 0 && Date.now() > trialEndsAt)) {
+        console.log('[WEBHOOK] BLOCKED: Subscription or Trial Expired for company:', companyId);
+        const paywallMessage = "Votre période d'essai de 7 jours est expirée. Rendez-vous sur votre dashboard Fiko Connect pour réactiver votre forfait.";
+        await WABAService.sendMessage({ to: phone, text: paywallMessage });
+        return paywallMessage;
+      }
+    }
+
     console.log('[WEBHOOK] Calling AI');
-    console.log('[ORCHESTRATOR] Trying provider: deepseek');
-    const prompt = `Lead: ${phone}. History: ${JSON.stringify(history.slice(-5))}. New message: ${content}. Reply professionally and suggest next step.`;
+    console.log('[ORCHESTRATOR] Trying provider: gemini-1.5-flash');
+    const knowledgeContext = KnowledgeBaseService.buildPromptContext(companyId);
+    const prompt = `${knowledgeContext}\nLead: ${phone}. History: ${JSON.stringify(history.slice(-5))}. New message: ${content}. Reply professionally and suggest next step to convert this lead.`;
     const result = await getAIClient().models.generateContent({ model: "gemini-1.5-flash", contents: prompt });
     const reply = result.text || "Merci pour votre message.";
     console.log('[WEBHOOK] AI response generated');
@@ -276,8 +297,99 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
+  // OTP Verification In-Memory Store
+  const otpStore = new Map<string, { code: string; expiresAt: number }>();
+
   // API routes
   app.get("/api/health", (req, res) => res.json({ status: "ok" }));
+
+  // Auth OTP Request
+  app.post("/api/auth/request-otp", async (req, res) => {
+    try {
+      const { phone } = req.body;
+      if (!phone) return res.status(400).json({ error: "Numéro de téléphone requis" });
+
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+      otpStore.set(phone, { code, expiresAt });
+
+      console.log('[AUTH] OTP requested for phone:', `${phone.slice(0, 5)}***`);
+      const wabaRes = await WABAService.sendMessage({
+        to: phone,
+        text: `Votre code d'activation Fiko Connect est : ${code}`
+      });
+
+      console.log('[AUTH] OTP WhatsApp delivery:', wabaRes.success ? 'success' : 'failed');
+      res.json({ success: true, message: "Code OTP envoyé sur WhatsApp" });
+    } catch (e: any) {
+      console.error("[AUTH] OTP Request Error:", e);
+      res.status(500).json({ error: "Impossible d'envoyer l'OTP" });
+    }
+  });
+
+  // Auth OTP Verification
+  app.post("/api/auth/verify-otp", (req, res) => {
+    try {
+      const { phone, otp } = req.body;
+      if (!phone || !otp) return res.status(400).json({ error: "Champs requis manquants" });
+
+      const record = otpStore.get(phone);
+      if (!record || record.expiresAt < Date.now() || record.code !== otp) {
+        console.error('[AUTH] OTP verification: failed');
+        return res.status(400).json({ error: "Code OTP invalide ou expiré" });
+      }
+
+      otpStore.delete(phone);
+      console.log('[AUTH] OTP verification: success');
+      res.json({ success: true, verified: true });
+    } catch (e: any) {
+      res.status(500).json({ error: "Vérification échouée" });
+    }
+  });
+
+  // Company Business Knowledge Training Endpoints
+  app.get("/api/company/knowledge", (req, res) => {
+    const companyId = (req.query.companyId as string) || "default_company";
+    const knowledge = KnowledgeBaseService.getCompanyKnowledge(companyId);
+    res.json(knowledge);
+  });
+
+  app.post("/api/company/knowledge", (req, res) => {
+    const { companyId, offers, faq, pricing, objections, targetAudience, salesScript } = req.body;
+    if (!companyId) return res.status(400).json({ error: "companyId requis" });
+
+    const updated = KnowledgeBaseService.updateCompanyKnowledge(companyId, {
+      offers,
+      faq,
+      pricing,
+      objections,
+      targetAudience,
+      salesScript
+    });
+
+    console.log('[TRAINING] Updated knowledge context for company:', companyId);
+    res.json({ success: true, knowledge: updated });
+  });
+
+  // Subscription Plans Endpoint
+  app.get("/api/subscription/plans", (req, res) => {
+    res.json(PLAN_CONFIGS);
+  });
+
+  // Subscription Checkout / Status Endpoint
+  app.post("/api/subscription/checkout", (req, res) => {
+    const { companyId, plan } = req.body;
+    if (!companyId || !plan) return res.status(400).json({ error: "companyId et plan requis" });
+
+    const details = SubscriptionService.getSubscriptionDetails({
+      companyId,
+      plan: plan as PlanTier,
+      status: 'ACTIVE'
+    });
+
+    console.log('[SUBSCRIPTION] Activated subscription:', details);
+    res.json({ success: true, subscription: details });
+  });
 
   // AI Campaign Assistant
   app.post("/api/campaigns/generate", async (req, res) => {
