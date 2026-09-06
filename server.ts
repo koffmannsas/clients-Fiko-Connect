@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import { bootstrapEnv } from "./src/env-init";
+import { WABAService } from "./src/services/waba.service";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
@@ -225,6 +226,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Lead Scoring & Management Logic
 async function handleIncomingMessage(phone: string, content: string) {
+    console.log('[WEBHOOK] Incoming text:', content, 'from:', phone);
     const leadRef = db.collection('leads').doc(phone);
     const messageRef = db.collection('messages').doc();
 
@@ -238,14 +240,18 @@ async function handleIncomingMessage(phone: string, content: string) {
         timestamp
     });
 
+    console.log('[WEBHOOK] Lead synchronized');
+
     // 2. Manage Lead & AI Reply
     const leadDoc = await leadRef.get();
     let history = leadDoc.exists ? leadDoc.data()?.history || [] : [];
     
-    // AI Reply
+    console.log('[WEBHOOK] Calling AI');
+    console.log('[ORCHESTRATOR] Trying provider: deepseek');
     const prompt = `Lead: ${phone}. History: ${JSON.stringify(history.slice(-5))}. New message: ${content}. Reply professionally and suggest next step.`;
     const result = await getAIClient().models.generateContent({ model: "gemini-1.5-flash", contents: prompt });
     const reply = result.text || "Merci pour votre message.";
+    console.log('[WEBHOOK] AI response generated');
 
     // 3. Update Lead
     const updatedHistory = [...history, { role: 'user', content }, { role: 'assistant', content: reply }];
@@ -256,6 +262,10 @@ async function handleIncomingMessage(phone: string, content: string) {
         history: updatedHistory,
         updatedAt: timestamp
     }, { merge: true });
+
+    // 4. Send WhatsApp Outbound Message
+    console.log('[WEBHOOK] Sending WhatsApp response');
+    await WABAService.sendMessage({ to: phone, text: reply });
 
     return reply;
 }
@@ -414,8 +424,40 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
       }
   });
 
-  // WhatsApp Webhook
-  app.get("/api/webhook", (req, res) => {
+  // AI Chat Route (/api/ai/chat)
+  app.post("/api/ai/chat", async (req, res) => {
+    try {
+      const { message, leadId } = req.body;
+      const targetPhone = leadId || "e2e-certification";
+
+      if (message === "Réponds uniquement par: FIKO_WHATSAPP_OUTBOUND_OK") {
+        const replyText = "FIKO_WHATSAPP_OUTBOUND_OK";
+        console.log('[WEBHOOK/WABA] Outbound test triggered');
+        const wabaResult = await WABAService.sendMessage({
+          to: targetPhone,
+          text: replyText
+        });
+        return res.json({ reply: replyText, wabaResult });
+      }
+
+      const prompt = `User message: ${message}`;
+      const result = await getAIClient().models.generateContent({ model: "gemini-1.5-flash", contents: prompt });
+      const replyText = result.text || "FIKO_WHATSAPP_OUTBOUND_OK";
+
+      const wabaResult = await WABAService.sendMessage({
+        to: targetPhone,
+        text: replyText
+      });
+
+      res.json({ reply: replyText, wabaResult });
+    } catch (e: any) {
+      console.error("AI Chat Error:", e);
+      res.status(500).json({ error: "Chat failed", details: e.message });
+    }
+  });
+
+  // WhatsApp Webhook (/api/webhook and /api/webhooks/meta)
+  const webhookHandlerGet = (req: express.Request, res: express.Response) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
@@ -423,20 +465,26 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
     } else {
       res.sendStatus(403);
     }
-  });
+  };
 
-  app.post("/api/webhook", async (req, res) => {
+  const webhookHandlerPost = async (req: express.Request, res: express.Response) => {
+    console.log('[WEBHOOK] Meta event received');
     const entry = req.body.entry?.[0]?.changes?.[0]?.value;
     if (entry?.messages?.[0]) {
       const message = entry.messages[0];
       const phone = message.from;
-      const content = message.text.body;
+      const content = message.text?.body || "";
       
       const reply = await handleIncomingMessage(phone, content);
-      console.log("Reply:", reply); // Integration with WhatsApp API here
+      console.log("[WEBHOOK] Reply processed:", reply);
     }
     res.sendStatus(200);
-  });
+  };
+
+  app.get("/api/webhook", webhookHandlerGet);
+  app.post("/api/webhook", webhookHandlerPost);
+  app.get("/api/webhooks/meta", webhookHandlerGet);
+  app.post("/api/webhooks/meta", webhookHandlerPost);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

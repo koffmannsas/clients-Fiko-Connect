@@ -26,6 +26,11 @@ export async function bootstrapEnv(): Promise<void> {
     console.log(`[ENV INIT] Secret ${check.key}: ${check.status}`);
   }
 
+  console.log('[WABA] Runtime configuration:', {
+    accessTokenPresent: Boolean(process.env.WHATSAPP_ACCESS_TOKEN),
+    phoneNumberIdPresent: Boolean(process.env.WHATSAPP_PHONE_NUMBER_ID)
+  });
+
   isBootstrapped = true;
   console.log('[ENV INIT] Environment bootstrap completed.');
 }
