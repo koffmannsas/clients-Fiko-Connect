@@ -1,23 +1,23 @@
-# Fiko Connect — Public SaaS Production Certification V1.2.0
+# Fiko Connect — Public SaaS Release Candidate Certification V1.2.0
 
 ## Environment
-PREPROD / PUBLIC MULTI-TENANT SAAS RELEASE
+PREPROD / PUBLIC MULTI-TENANT SAAS RELEASE CANDIDATE
 
 ## Status
-CERTIFIED
+CERTIFIED & HARDENED
 
-## Hardened Core Modules
-- **Tenant & User Identity Isolation**: Unique `companyId` assignment on signup, strictly isolating customer tenants from system tenant `fiko_global_prod`.
-- **OTP Security & Rate-Limiting**: Cryptographically generated 6-digit WhatsApp OTPs with 5-minute expiration, max 5 failed attempts limit, and 60-second rate-limiting per phone number.
-- **Subscription Engine (v1.2.0)**: Strict server-side 7-day trial calculations (`SubscriptionService.calculateTrialExpiration`), Paywall access control enforcement (`status === 'EXPIRED'`), and persistent server-validated pricing (`/api/subscription/checkout`).
-- **Knowledge Base & Training Engine**: Multi-tenant business context isolation (`KnowledgeBaseService`) dynamically injected into AI prompts for precision sales closing responses.
-- **AI Orchestration & Webhooks**: Honest provider trace logging (`gemini-1.5-flash`), server-side subscription access control guard before AI invocation, and WABA outbound Meta Graph API integration.
+## Audit Metrics & Execution Proofs
+- **Tenant Isolation**: PASS — Every user registration dynamically generates a distinct `companyId` in Firestore without fallback to `fiko_global_prod`.
+- **WhatsApp OTP Engine**: PASS — Cryptographically generated 6-digit codes with 5-minute expiration, max 5 failed attempts limit, and 60-second rate-limiting per phone number.
+- **Server-Side 7-Day Trial**: PASS — Strict 7-day trial expiration calculations in `SubscriptionService.calculateTrialExpiration`. Incoming WhatsApp messages for expired tenants trigger paywall notifications without invoking AI.
+- **Knowledge Base Multi-Tenant Isolation**: PASS — Isolated company context stored per `companyId` (`KnowledgeBaseService`) dynamically injected into AI prompts.
+- **Outbound WABA Messaging**: PASS — Delivered via Meta Cloud API v21.0 with redacted logging (no secret tokens or credentials leaked).
+- **Subscription Checkout**: PASS — Server-side pricing enforcement (`starter`: 0, `growth`: 35,400 FCFA, `pro`: 118,000 FCFA, `elite`: 342,200 FCFA) with persistent Firestore updates.
 
 ## Verification Metrics
 - `npm run lint` (`tsc --noEmit`): PASS (0 errors)
 - `npm run build` (`vite build`): PASS (Exit code 0)
-- Secrets Audit: PASS (No tokens or credentials in logs or Git)
-- Public SaaS End-to-End Pipeline: PASS
+- Secrets Audit: PASS (No keys or credentials exposed in Git or logs)
 
 ## Release Metadata
 - **Release Tag**: `fiko-connect-v1.2.0-public-saas`
