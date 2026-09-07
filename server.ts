@@ -297,21 +297,27 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  // OTP Verification In-Memory Store
-  const otpStore = new Map<string, { code: string; expiresAt: number }>();
+  // Hardened OTP Verification Store
+  const otpStore = new Map<string, { code: string; expiresAt: number; attempts: number; lastRequestedAt: number }>();
 
   // API routes
   app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 
-  // Auth OTP Request
+  // Auth OTP Request with rate limiting & 5-minute expiration
   app.post("/api/auth/request-otp", async (req, res) => {
     try {
       const { phone } = req.body;
       if (!phone) return res.status(400).json({ error: "Numéro de téléphone requis" });
 
+      const existing = otpStore.get(phone);
+      if (existing && Date.now() - existing.lastRequestedAt < 60000) {
+        console.warn('[AUTH] OTP_RATE_LIMITED for phone:', `${phone.slice(0, 5)}***`);
+        return res.status(429).json({ error: "Veuillez patienter 60 secondes avant de solliciter un nouvel OTP" });
+      }
+
       const code = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
-      otpStore.set(phone, { code, expiresAt });
+      const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+      otpStore.set(phone, { code, expiresAt, attempts: 0, lastRequestedAt: Date.now() });
 
       console.log('[AUTH] OTP requested for phone:', `${phone.slice(0, 5)}***`);
       const wabaRes = await WABAService.sendMessage({
@@ -327,16 +333,34 @@ async function startServer() {
     }
   });
 
-  // Auth OTP Verification
+  // Auth OTP Verification with max 5 attempts
   app.post("/api/auth/verify-otp", (req, res) => {
     try {
       const { phone, otp } = req.body;
       if (!phone || !otp) return res.status(400).json({ error: "Champs requis manquants" });
 
       const record = otpStore.get(phone);
-      if (!record || record.expiresAt < Date.now() || record.code !== otp) {
-        console.error('[AUTH] OTP verification: failed');
+      if (!record) {
+        console.error('[AUTH] OTP_INVALID: No record found');
         return res.status(400).json({ error: "Code OTP invalide ou expiré" });
+      }
+
+      if (record.expiresAt < Date.now()) {
+        otpStore.delete(phone);
+        console.error('[AUTH] OTP_EXPIRED');
+        return res.status(400).json({ error: "Code OTP expiré" });
+      }
+
+      if (record.attempts >= 5) {
+        otpStore.delete(phone);
+        console.error('[AUTH] OTP_TOO_MANY_ATTEMPTS');
+        return res.status(429).json({ error: "Trop de tentatives infructueuses. Veuillez solliciter un nouvel OTP" });
+      }
+
+      if (record.code !== otp) {
+        record.attempts += 1;
+        console.error('[AUTH] OTP verification: failed attempt', record.attempts);
+        return res.status(400).json({ error: "Code OTP invalide" });
       }
 
       otpStore.delete(phone);
