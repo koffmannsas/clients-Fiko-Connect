@@ -372,24 +372,24 @@ async function startServer() {
   });
 
   // Company Business Knowledge Training Endpoints
-  app.get("/api/company/knowledge", (req, res) => {
+  app.get("/api/company/knowledge", async (req, res) => {
     const companyId = (req.query.companyId as string) || "default_company";
-    const knowledge = KnowledgeBaseService.getCompanyKnowledge(companyId);
+    const knowledge = await KnowledgeBaseService.getCompanyKnowledgeAsync(companyId, db);
     res.json(knowledge);
   });
 
-  app.post("/api/company/knowledge", (req, res) => {
+  app.post("/api/company/knowledge", async (req, res) => {
     const { companyId, offers, faq, pricing, objections, targetAudience, salesScript } = req.body;
     if (!companyId) return res.status(400).json({ error: "companyId requis" });
 
-    const updated = KnowledgeBaseService.updateCompanyKnowledge(companyId, {
+    const updated = await KnowledgeBaseService.updateCompanyKnowledgeAsync(companyId, {
       offers,
       faq,
       pricing,
       objections,
       targetAudience,
       salesScript
-    });
+    }, db);
 
     console.log('[TRAINING] Updated knowledge context for company:', companyId);
     res.json({ success: true, knowledge: updated });
@@ -401,7 +401,7 @@ async function startServer() {
   });
 
   // Subscription Checkout / Status Endpoint
-  app.post("/api/subscription/checkout", (req, res) => {
+  app.post("/api/subscription/checkout", async (req, res) => {
     const { companyId, plan } = req.body;
     if (!companyId || !plan) return res.status(400).json({ error: "companyId et plan requis" });
 
@@ -410,6 +410,19 @@ async function startServer() {
       plan: plan as PlanTier,
       status: 'ACTIVE'
     });
+
+    try {
+      await db.collection('subscriptions').doc(companyId).set({
+        companyId,
+        plan,
+        status: 'ACTIVE',
+        subscriptionStartedAt: new Date().toISOString(),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      console.log('[SUBSCRIPTION] Persisted active subscription in Firestore for company:', companyId);
+    } catch (err) {
+      console.error('[SUBSCRIPTION] Firestore save error:', err);
+    }
 
     console.log('[SUBSCRIPTION] Activated subscription:', details);
     res.json({ success: true, subscription: details });
