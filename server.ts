@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import crypto from "crypto";
 import { bootstrapEnv } from "./src/env-init";
 import { WABAService } from "./src/services/waba.service";
 import { KnowledgeBaseService } from "./src/services/knowledge-base.service";
@@ -226,8 +227,35 @@ function getAIClient(): GoogleGenAI {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Helper to resolve companyId dynamically from Firestore if not directly provided
+async function resolveTenantCompanyId(phone: string, phoneNumberId?: string, explicitCompanyId?: string): Promise<string | null> {
+  if (explicitCompanyId) return explicitCompanyId;
+
+  // 1. Check existing lead document
+  const leadDoc = await db.collection('leads').doc(phone).get();
+  if (leadDoc.exists && leadDoc.data()?.companyId) {
+    return leadDoc.data()?.companyId;
+  }
+
+  // 2. Check company by WABA phoneNumberId
+  if (phoneNumberId) {
+    const compSnap = await db.collection('companies').where('phoneNumberId', '==', phoneNumberId).limit(1).get();
+    if (!compSnap.empty) {
+      return compSnap.docs[0].id;
+    }
+  }
+
+  // 3. Fallback: Lookup first registered active company or master company in database
+  const fallbackComp = await db.collection('companies').limit(1).get();
+  if (!fallbackComp.empty) {
+    return fallbackComp.docs[0].id;
+  }
+
+  return null;
+}
+
 // Lead Scoring & Management Logic
-async function handleIncomingMessage(phone: string, content: string, incomingCompanyId?: string) {
+async function handleIncomingMessage(phone: string, content: string, incomingCompanyId?: string, phoneNumberId?: string) {
     console.log('[WEBHOOK] Incoming text:', content, 'from:', phone);
     const leadRef = db.collection('leads').doc(phone);
     const messageRef = db.collection('messages').doc();
@@ -248,7 +276,15 @@ async function handleIncomingMessage(phone: string, content: string, incomingCom
     const leadDoc = await leadRef.get();
     const isLeadDocPresent = leadDoc.exists === true;
     let history = isLeadDocPresent ? leadDoc.data()?.history || [] : [];
-    const resolvedCompanyId = incomingCompanyId || (isLeadDocPresent ? leadDoc.data()?.companyId : null) || 'co_system_master';
+
+    const resolvedCompanyId = await resolveTenantCompanyId(phone, phoneNumberId, incomingCompanyId);
+
+    if (!resolvedCompanyId) {
+      console.error('[WEBHOOK] FAIL CLOSED: Unresolved tenant companyId for phone:', `${phone.slice(0, 5)}***`);
+      const errorMessage = "Impossible de déterminer l'espace entreprise associé à cette conversation. Veuillez contacter le support.";
+      await WABAService.sendMessage({ to: phone, text: errorMessage });
+      return errorMessage;
+    }
 
     // Verify Subscription Server-side Access using SubscriptionService
     const subRef = db.collection('subscriptions').doc(resolvedCompanyId);
@@ -314,7 +350,7 @@ async function startServer() {
         return res.status(429).json({ error: "Veuillez patienter 60 secondes avant de solliciter un nouvel OTP" });
       }
 
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const code = crypto.randomInt(100000, 1000000).toString();
       const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
       otpStore.set(phone, { code, expiresAt, attempts: 0, lastRequestedAt: Date.now() });
 
@@ -405,6 +441,12 @@ async function startServer() {
     const { companyId, plan } = req.body;
     if (!companyId || !plan) return res.status(400).json({ error: "companyId et plan requis" });
 
+    if (!PLAN_CONFIGS[plan as PlanTier]) {
+      return res.status(400).json({ error: "Formule ou plan d'abonnement non valide" });
+    }
+
+    const planConfig = PLAN_CONFIGS[plan as PlanTier];
+
     const details = SubscriptionService.getSubscriptionDetails({
       companyId,
       plan: plan as PlanTier,
@@ -416,6 +458,9 @@ async function startServer() {
         companyId,
         plan,
         status: 'ACTIVE',
+        priceFCFA: planConfig.priceFCFA,
+        currency: 'XOF',
+        features: planConfig.features,
         subscriptionStartedAt: new Date().toISOString(),
         updatedAt: FieldValue.serverTimestamp()
       }, { merge: true });
@@ -578,7 +623,11 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
     try {
       const { message, leadId, companyId: queryCompanyId } = req.body;
       const targetPhone = leadId || "e2e-certification";
-      const companyId = queryCompanyId || "co_system_master";
+      const companyId = queryCompanyId;
+
+      if (!companyId) {
+        return res.status(400).json({ error: "TENANT_REQUIRED", message: "Un identifiant d'entreprise companyId est requis pour cette opération." });
+      }
 
       // Verify Subscription Access
       const subRef = db.collection('subscriptions').doc(companyId);
@@ -636,8 +685,9 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
       const message = entry.messages[0];
       const phone = message.from;
       const content = message.text?.body || "";
+      const phoneNumberId = entry.metadata?.phone_number_id;
       
-      const reply = await handleIncomingMessage(phone, content);
+      const reply = await handleIncomingMessage(phone, content, undefined, phoneNumberId);
       console.log("[WEBHOOK] Reply processed:", reply);
     }
     res.sendStatus(200);

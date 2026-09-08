@@ -1054,9 +1054,13 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
                 <button
                   type="button"
                   onClick={async () => {
+                    if (!userCompanyId && !currentUser?.uid) {
+                      setErrorMessage("Erreur d'espace entreprise: Veuillez vous réauthentifier.");
+                      return;
+                    }
                     setLoading(true);
                     try {
-                      const targetCompanyId = userCompanyId || (currentUser?.uid ? `co_${currentUser.uid}` : 'meta-review-company');
+                      const targetCompanyId = userCompanyId || `co_${currentUser.uid}`;
                       const res = await fetch('/api/subscription/checkout', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
