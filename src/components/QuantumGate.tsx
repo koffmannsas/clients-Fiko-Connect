@@ -81,6 +81,7 @@ interface QuantumGateProps {
 export default function QuantumGate({ onEnter }: QuantumGateProps) {
   // 1. Auth & Session tracking
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [userCompanyId, setUserCompanyId] = useState<string>('');
   const [authLoading, setAuthLoading] = useState(true);
 
   // 2. Identity layer views
@@ -139,7 +140,9 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
       const userData = userSnap.data();
       const companyId = userData.companyId;
 
-      if (!companyId) {
+      if (companyId) {
+        setUserCompanyId(companyId);
+      } else {
          setIdentityOpen(false);
          setOnboardActive(true);
          setOnboardStep(1);
@@ -190,7 +193,7 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
     }
   };
 
-  const requestLiveOtp = async () => {
+  const requestLiveOtp = async (): Promise<boolean> => {
     setOtpLoading(true);
     setErrorMessage('');
     try {
@@ -202,8 +205,10 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Impossible d\'envoyer l\'OTP');
       setOtpSent(true);
+      return true;
     } catch (e: any) {
       setErrorMessage(e.message || 'Erreur d\'envoi OTP');
+      return false;
     } finally {
       setOtpLoading(false);
     }
@@ -536,14 +541,16 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
                   </button>
                   <button
                     type="button"
-                    disabled={!emailAddress.trim() || onboardPassword.length < 6}
-                    onClick={() => {
-                      requestLiveOtp();
-                      setOnboardStep(4);
+                    disabled={!emailAddress.trim() || onboardPassword.length < 6 || otpLoading}
+                    onClick={async () => {
+                      const success = await requestLiveOtp();
+                      if (success) {
+                        setOnboardStep(4);
+                      }
                     }}
                     className="flex-1 bg-[#E10600] disabled:opacity-45 text-white py-4 rounded-xl font-black text-xs tracking-wider uppercase hover:bg-red-700 transition flex items-center justify-center gap-2 cursor-pointer shadow-[0_4px_20px_rgba(225,6,0,0.25)]"
                   >
-                    Envoyer le code WhatsApp OTP <ChevronRight size={14} />
+                    {otpLoading ? <Loader2 size={16} className="animate-spin" /> : "Envoyer le code WhatsApp OTP"} <ChevronRight size={14} />
                   </button>
                 </div>
               </div>
@@ -1049,10 +1056,11 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
                   onClick={async () => {
                     setLoading(true);
                     try {
+                      const targetCompanyId = userCompanyId || (currentUser?.uid ? `co_${currentUser.uid}` : 'meta-review-company');
                       const res = await fetch('/api/subscription/checkout', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ companyId: currentUser?.uid ? 'co_user' : 'meta-review-company', plan: selectedPlan })
+                        body: JSON.stringify({ companyId: targetCompanyId, plan: selectedPlan })
                       });
                       const data = await res.json();
                       if (data.success) {

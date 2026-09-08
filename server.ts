@@ -227,7 +227,7 @@ function getAIClient(): GoogleGenAI {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Lead Scoring & Management Logic
-async function handleIncomingMessage(phone: string, content: string) {
+async function handleIncomingMessage(phone: string, content: string, incomingCompanyId?: string) {
     console.log('[WEBHOOK] Incoming text:', content, 'from:', phone);
     const leadRef = db.collection('leads').doc(phone);
     const messageRef = db.collection('messages').doc();
@@ -248,27 +248,25 @@ async function handleIncomingMessage(phone: string, content: string) {
     const leadDoc = await leadRef.get();
     const isLeadDocPresent = leadDoc.exists === true;
     let history = isLeadDocPresent ? leadDoc.data()?.history || [] : [];
-    const companyId = isLeadDocPresent ? leadDoc.data()?.companyId || 'default_company' : 'default_company';
+    const resolvedCompanyId = incomingCompanyId || (isLeadDocPresent ? leadDoc.data()?.companyId : null) || 'co_system_master';
 
-    // Verify Subscription Server-side Access
-    const subRef = db.collection('subscriptions').doc(companyId);
+    // Verify Subscription Server-side Access using SubscriptionService
+    const subRef = db.collection('subscriptions').doc(resolvedCompanyId);
     const subSnap = await subRef.get();
-    if (subSnap.exists === true) {
-      const subData = subSnap.data();
-      const trialEndsAt = subData && subData.trialEndsAt ? new Date(subData.trialEndsAt).getTime() : 0;
-      const status = subData ? subData.status : undefined;
-      const plan = subData ? subData.plan : undefined;
-      if (status === 'EXPIRED' || (plan === 'starter' && trialEndsAt > 0 && Date.now() > trialEndsAt)) {
-        console.log('[WEBHOOK] BLOCKED: Subscription or Trial Expired for company:', companyId);
-        const paywallMessage = "Votre période d'essai de 7 jours est expirée. Rendez-vous sur votre dashboard Fiko Connect pour réactiver votre forfait.";
-        await WABAService.sendMessage({ to: phone, text: paywallMessage });
-        return paywallMessage;
-      }
+    const subDetails = SubscriptionService.getSubscriptionDetails(
+      subSnap.exists === true ? (subSnap.data() as any) : { companyId: resolvedCompanyId, plan: 'starter', status: 'TRIAL' }
+    );
+    const accessCheck = SubscriptionService.verifySubscriptionAccess(subDetails);
+    if (!accessCheck.allowed) {
+      console.log('[WEBHOOK] BLOCKED: Subscription or Trial Expired for company:', resolvedCompanyId, 'reason:', accessCheck.reason);
+      const paywallMessage = accessCheck.reason || "Votre période d'essai de 7 jours est expirée. Rendez-vous sur votre dashboard Fiko Connect pour réactiver votre forfait.";
+      await WABAService.sendMessage({ to: phone, text: paywallMessage });
+      return paywallMessage;
     }
 
     console.log('[WEBHOOK] Calling AI');
     console.log('[ORCHESTRATOR] Trying provider: gemini-1.5-flash');
-    const knowledgeContext = KnowledgeBaseService.buildPromptContext(companyId);
+    const knowledgeContext = await KnowledgeBaseService.buildPromptContextAsync(resolvedCompanyId, db);
     const prompt = `${knowledgeContext}\nLead: ${phone}. History: ${JSON.stringify(history.slice(-5))}. New message: ${content}. Reply professionally and suggest next step to convert this lead.`;
     const result = await getAIClient().models.generateContent({ model: "gemini-1.5-flash", contents: prompt });
     const reply = result.text || "Merci pour votre message.";
@@ -279,6 +277,7 @@ async function handleIncomingMessage(phone: string, content: string) {
     
     await leadRef.set({
         phone,
+        companyId: resolvedCompanyId,
         status: 'WARM', // Simple scoring logic
         history: updatedHistory,
         updatedAt: timestamp
@@ -373,7 +372,8 @@ async function startServer() {
 
   // Company Business Knowledge Training Endpoints
   app.get("/api/company/knowledge", async (req, res) => {
-    const companyId = (req.query.companyId as string) || "default_company";
+    const companyId = req.query.companyId as string;
+    if (!companyId) return res.status(400).json({ error: "companyId requis" });
     const knowledge = await KnowledgeBaseService.getCompanyKnowledgeAsync(companyId, db);
     res.json(knowledge);
   });
@@ -576,8 +576,20 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
   // AI Chat Route (/api/ai/chat)
   app.post("/api/ai/chat", async (req, res) => {
     try {
-      const { message, leadId } = req.body;
+      const { message, leadId, companyId: queryCompanyId } = req.body;
       const targetPhone = leadId || "e2e-certification";
+      const companyId = queryCompanyId || "co_system_master";
+
+      // Verify Subscription Access
+      const subRef = db.collection('subscriptions').doc(companyId);
+      const subSnap = await subRef.get();
+      const subDetails = SubscriptionService.getSubscriptionDetails(
+        subSnap.exists === true ? (subSnap.data() as any) : { companyId, plan: 'starter', status: 'TRIAL' }
+      );
+      const accessCheck = SubscriptionService.verifySubscriptionAccess(subDetails);
+      if (!accessCheck.allowed) {
+        return res.status(402).json({ error: "SUBSCRIPTION_REQUIRED", reason: accessCheck.reason });
+      }
 
       if (message === "Réponds uniquement par: FIKO_WHATSAPP_OUTBOUND_OK") {
         const replyText = "FIKO_WHATSAPP_OUTBOUND_OK";
@@ -589,7 +601,8 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
         return res.json({ reply: replyText, wabaResult });
       }
 
-      const prompt = `User message: ${message}`;
+      const knowledgeContext = await KnowledgeBaseService.buildPromptContextAsync(companyId, db);
+      const prompt = `${knowledgeContext}\nUser message: ${message}`;
       const result = await getAIClient().models.generateContent({ model: "gemini-1.5-flash", contents: prompt });
       const replyText = result.text || "FIKO_WHATSAPP_OUTBOUND_OK";
 

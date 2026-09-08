@@ -80,6 +80,19 @@ export class KnowledgeBaseService {
     return updated;
   }
 
+  static async buildPromptContextAsync(companyId: string, adminDb?: any): Promise<string> {
+    const k = await this.getCompanyKnowledgeAsync(companyId, adminDb);
+    return `
+BUSINESS CONTEXT FOR COMPANY (${companyId}):
+- OFFERS: ${k.offers || 'N/A'}
+- FAQ: ${k.faq || 'N/A'}
+- PRICING: ${k.pricing || 'N/A'}
+- OBJECTIONS & CLOSING: ${k.objections || 'N/A'}
+- TARGET AUDIENCE: ${k.targetAudience || 'N/A'}
+- SALES SCRIPT: ${k.salesScript || 'N/A'}
+`;
+  }
+
   static buildPromptContext(companyId: string): string {
     const k = this.getCompanyKnowledge(companyId);
     return `

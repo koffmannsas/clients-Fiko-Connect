@@ -110,7 +110,7 @@ export class SubscriptionService {
     }
 
     return {
-      companyId: record?.companyId || 'default_company',
+      companyId: record?.companyId || 'co_unknown',
       plan,
       status,
       createdAt,
