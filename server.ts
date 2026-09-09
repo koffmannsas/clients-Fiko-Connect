@@ -245,12 +245,7 @@ async function resolveTenantCompanyId(phone: string, phoneNumberId?: string, exp
     }
   }
 
-  // 3. Fallback: Lookup first registered active company or master company in database
-  const fallbackComp = await db.collection('companies').limit(1).get();
-  if (!fallbackComp.empty) {
-    return fallbackComp.docs[0].id;
-  }
-
+  // 3. Fail closed if tenant mapping cannot be determined
   return null;
 }
 
@@ -361,6 +356,10 @@ async function startServer() {
       });
 
       console.log('[AUTH] OTP WhatsApp delivery:', wabaRes.success ? 'success' : 'failed');
+      if (!wabaRes.success) {
+        return res.status(502).json({ error: "Échec d'envoi du message WhatsApp via Meta API" });
+      }
+
       res.json({ success: true, message: "Code OTP envoyé sur WhatsApp" });
     } catch (e: any) {
       console.error("[AUTH] OTP Request Error:", e);
