@@ -714,17 +714,29 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
   };
 
   const webhookHandlerPost = async (req: express.Request, res: express.Response) => {
-    console.log('[WEBHOOK] Meta event received');
-    const entry = req.body.entry?.[0]?.changes?.[0]?.value;
-    if (entry?.messages?.[0]) {
-      const message = entry.messages[0];
-      const phone = message.from;
-      const content = message.text?.body || "";
-      const phoneNumberId = entry.metadata?.phone_number_id;
-      
-      const reply = await handleIncomingMessage(phone, content, undefined, phoneNumberId);
-      console.log("[WEBHOOK] Reply processed:", reply);
+    const requestId = `wh_${crypto.randomUUID().substring(0, 8)}`;
+    console.log(`[WEBHOOK][RECEIVED] id:${requestId}`);
+
+    try {
+      const entry = req.body.entry?.[0]?.changes?.[0]?.value;
+      if (entry?.messages?.[0]) {
+        const message = entry.messages[0];
+        const phone = message.from;
+        const content = message.text?.body || "";
+        const phoneNumberId = entry.metadata?.phone_number_id;
+
+        console.log(`[WEBHOOK][PARSED] id:${requestId} phone:${phone ? `${phone.slice(0, 5)}***` : 'none'} phoneId:${phoneNumberId || 'none'}`);
+
+        const reply = await handleIncomingMessage(phone, content, undefined, phoneNumberId);
+        console.log(`[WEBHOOK][COMPLETED] id:${requestId} reply:${reply ? 'generated' : 'empty'}`);
+      } else {
+        console.log(`[WEBHOOK][NO_MESSAGE] id:${requestId}`);
+      }
+    } catch (err: any) {
+      console.error(`[WEBHOOK][ERROR] id:${requestId}`, { message: err?.message || String(err) });
     }
+
+    // Always respond 200 to Meta to acknowledge event receipt
     res.sendStatus(200);
   };
 
