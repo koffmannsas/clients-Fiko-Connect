@@ -97,12 +97,13 @@ export class SubscriptionService {
 
   static getSubscriptionDetails(record?: Partial<SubscriptionRecord>): SubscriptionRecord {
     const now = new Date();
-    const { trialStartedAt, trialEndsAt } = this.calculateTrialExpiration(now);
+    const createdAt = record?.createdAt || record?.trialStartedAt || now.toISOString();
+    const createdAtDate = new Date(createdAt);
+    const calculatedTrial = this.calculateTrialExpiration(createdAtDate);
 
     const plan = record?.plan || 'starter';
-    const createdAt = record?.createdAt || now.toISOString();
-    const start = record?.trialStartedAt || trialStartedAt;
-    const end = record?.trialEndsAt || trialEndsAt;
+    const start = record?.trialStartedAt || calculatedTrial.trialStartedAt;
+    const end = record?.trialEndsAt || calculatedTrial.trialEndsAt;
 
     let status: SubscriptionStatus = record?.status || 'TRIAL';
     if (status === 'TRIAL' && this.isTrialExpired(end)) {

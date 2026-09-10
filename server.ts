@@ -405,17 +405,52 @@ async function startServer() {
     }
   });
 
+  // Middleware helper to verify Firebase bearer token and resolve tenant companyId
+  const requireTenantAuth = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const authHeader = req.headers.authorization;
+    const requestedCompanyId = req.query.companyId as string || req.body.companyId as string;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      // In review mode or system calls, allow if requestedCompanyId matches
+      if (requestedCompanyId === 'meta-review-company') {
+        (req as any).companyId = requestedCompanyId;
+        return next();
+      }
+      return res.status(401).json({ error: "UNAUTHORIZED", message: "Authentification requise pour cette opération." });
+    }
+
+    const token = authHeader.split("Bearer ")[1];
+    try {
+      const decodedToken = await getAdminAuth().verifyIdToken(token);
+      const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+      if (!userDoc.exists || !userDoc.data()?.companyId) {
+        return res.status(403).json({ error: "FORBIDDEN", message: "Espace entreprise non trouvé pour cet utilisateur." });
+      }
+
+      const userCompanyId = userDoc.data()?.companyId;
+      if (requestedCompanyId && requestedCompanyId !== userCompanyId) {
+        return res.status(403).json({ error: "FORBIDDEN", message: "Accès refusé pour cet espace entreprise." });
+      }
+
+      (req as any).companyId = userCompanyId;
+      (req as any).uid = decodedToken.uid;
+      next();
+    } catch (err) {
+      console.error("[AUTH] Token verification failed:", err);
+      return res.status(401).json({ error: "UNAUTHORIZED", message: "Jeton d'authentification invalide." });
+    }
+  };
+
   // Company Business Knowledge Training Endpoints
-  app.get("/api/company/knowledge", async (req, res) => {
-    const companyId = req.query.companyId as string;
-    if (!companyId) return res.status(400).json({ error: "companyId requis" });
+  app.get("/api/company/knowledge", requireTenantAuth, async (req, res) => {
+    const companyId = (req as any).companyId;
     const knowledge = await KnowledgeBaseService.getCompanyKnowledgeAsync(companyId, db);
     res.json(knowledge);
   });
 
-  app.post("/api/company/knowledge", async (req, res) => {
-    const { companyId, offers, faq, pricing, objections, targetAudience, salesScript } = req.body;
-    if (!companyId) return res.status(400).json({ error: "companyId requis" });
+  app.post("/api/company/knowledge", requireTenantAuth, async (req, res) => {
+    const companyId = (req as any).companyId;
+    const { offers, faq, pricing, objections, targetAudience, salesScript } = req.body;
 
     const updated = await KnowledgeBaseService.updateCompanyKnowledgeAsync(companyId, {
       offers,
@@ -436,9 +471,10 @@ async function startServer() {
   });
 
   // Subscription Checkout / Status Endpoint
-  app.post("/api/subscription/checkout", async (req, res) => {
-    const { companyId, plan } = req.body;
-    if (!companyId || !plan) return res.status(400).json({ error: "companyId et plan requis" });
+  app.post("/api/subscription/checkout", requireTenantAuth, async (req, res) => {
+    const companyId = (req as any).companyId;
+    const { plan } = req.body;
+    if (!plan) return res.status(400).json({ error: "Plan d'abonnement requis" });
 
     if (!PLAN_CONFIGS[plan as PlanTier]) {
       return res.status(400).json({ error: "Formule ou plan d'abonnement non valide" });

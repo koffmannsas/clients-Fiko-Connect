@@ -273,7 +273,7 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
       setOnboardStep(5);
       const userCredential = await createUserWithEmailAndPassword(auth, emailAddress.trim().toLowerCase(), onboardPassword);
       const uid = userCredential.user.uid;
-      const companyId = 'co_' + Math.random().toString(36).substr(2, 9);
+      const companyId = 'co_' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '').substring(0, 12) : Math.random().toString(36).substr(2, 9));
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       setOnboardStep(6);
@@ -297,6 +297,7 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
         industry: 'Prestations de Service',
         country: 'CI',
         whatsappNumber: whatsappNumber.trim(),
+        phoneNumberId: whatsappNumber.trim().replace(/[^0-9]/g, ""),
         ownerId: uid,
         createdAt: new Date().toISOString()
       };
