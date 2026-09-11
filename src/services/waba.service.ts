@@ -5,7 +5,53 @@ export interface WABASendOptions {
   company?: { waba?: { phoneNumberId?: string } };
 }
 
+export interface WABATypingOptions {
+  to: string;
+  vault?: { wabaToken?: string };
+  company?: { waba?: { phoneNumberId?: string } };
+}
+
 export class WABAService {
+  static async sendTypingIndicator(options: WABATypingOptions): Promise<{ success: boolean; data?: any; error?: any }> {
+    const { to, vault, company } = options;
+
+    const token = vault?.wabaToken || process.env.WHATSAPP_ACCESS_TOKEN;
+    const phoneId = company?.waba?.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+    if (!token || !phoneId) {
+      return { success: false, error: 'Missing WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID' };
+    }
+
+    try {
+      const response = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'action',
+          action: 'typing_on'
+        })
+      });
+
+      const responseData = await response.json();
+      if (!response.ok) {
+        console.warn('[WABA][TYPING] Meta response warning:', responseData?.error?.message || response.statusText);
+        return { success: false, error: responseData };
+      }
+
+      console.log('[WABA][TYPING] Native typing indicator enabled for recipient:', to ? `${to.slice(0, 5)}***` : '');
+      return { success: true, data: responseData };
+    } catch (err: any) {
+      console.warn('[WABA][TYPING] Non-blocking typing indicator error:', err?.message);
+      return { success: false, error: err?.message };
+    }
+  }
+
   static async sendMessage(options: WABASendOptions): Promise<{ success: boolean; data?: any; error?: any }> {
     const { to, text, vault, company } = options;
 

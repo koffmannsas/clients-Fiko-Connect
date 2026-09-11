@@ -256,6 +256,15 @@ async function resolveTenantCompanyId(phone: string, phoneNumberId?: string, exp
 // Lead Scoring & Management Logic
 async function handleIncomingMessage(phone: string, content: string, incomingCompanyId?: string, phoneNumberId?: string) {
     console.log('[WEBHOOK] Incoming text:', content, 'from:', phone);
+
+    // Trigger native Meta WhatsApp typing indicator (non-blocking)
+    try {
+      console.log('[WEBHOOK][WABA] Triggering native WhatsApp typing indicator for:', `${phone.slice(0, 5)}***`);
+      await WABAService.sendTypingIndicator({ to: phone });
+    } catch (typingErr) {
+      console.warn('[WEBHOOK][WABA] Non-blocking typing indicator error:', typingErr);
+    }
+
     const leadRef = db.collection('leads').doc(phone);
     const messageRef = db.collection('messages').doc();
 
