@@ -237,11 +237,15 @@ async function resolveTenantCompanyId(phone: string, phoneNumberId?: string, exp
     return leadDoc.data()?.companyId;
   }
 
-  // 2. Check company by WABA phoneNumberId
+  // 2. Check company by WABA phoneNumberId or whatsappNumber
   if (phoneNumberId) {
     const compSnap = await db.collection('companies').where('phoneNumberId', '==', phoneNumberId).limit(1).get();
     if (!compSnap.empty) {
       return compSnap.docs[0].id;
+    }
+    const phoneSnap = await db.collection('companies').where('whatsappNumber', '==', phoneNumberId).limit(1).get();
+    if (!phoneSnap.empty) {
+      return phoneSnap.docs[0].id;
     }
   }
 
@@ -411,11 +415,6 @@ async function startServer() {
     const requestedCompanyId = req.query.companyId as string || req.body.companyId as string;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      // In review mode or system calls, allow if requestedCompanyId matches
-      if (requestedCompanyId === 'meta-review-company') {
-        (req as any).companyId = requestedCompanyId;
-        return next();
-      }
       return res.status(401).json({ error: "UNAUTHORIZED", message: "Authentification requise pour cette opération." });
     }
 
@@ -654,11 +653,11 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
   });
 
   // AI Chat Route (/api/ai/chat)
-  app.post("/api/ai/chat", async (req, res) => {
+  app.post("/api/ai/chat", requireTenantAuth, async (req, res) => {
     try {
-      const { message, leadId, companyId: queryCompanyId } = req.body;
+      const { message, leadId } = req.body;
+      const companyId = (req as any).companyId;
       const targetPhone = leadId || "e2e-certification";
-      const companyId = queryCompanyId;
 
       if (!companyId) {
         return res.status(400).json({ error: "TENANT_REQUIRED", message: "Un identifiant d'entreprise companyId est requis pour cette opération." });
