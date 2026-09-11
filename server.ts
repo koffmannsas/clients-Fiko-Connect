@@ -7,6 +7,7 @@ import { bootstrapEnv } from "./src/env-init";
 import { WABAService } from "./src/services/waba.service";
 import { KnowledgeBaseService } from "./src/services/knowledge-base.service";
 import { SubscriptionService, PLAN_CONFIGS, PlanTier } from "./src/services/subscription.service";
+import { MiniCRMService } from "./src/services/mini-crm.service";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
@@ -448,6 +449,66 @@ async function startServer() {
       return res.status(401).json({ error: "UNAUTHORIZED", message: "Jeton d'authentification invalide." });
     }
   };
+
+  // Mini CRM Endpoints Protected by requireTenantAuth
+  app.get("/api/crm/overview", requireTenantAuth, async (req, res) => {
+    try {
+      const companyId = (req as any).companyId;
+      const subRef = db.collection('subscriptions').doc(companyId);
+      const subSnap = await subRef.get();
+      const plan: PlanTier = subSnap.exists && subSnap.data()?.plan ? subSnap.data()?.plan : 'starter';
+
+      const overview = await MiniCRMService.getOverviewAsync(companyId, plan, db);
+      res.json(overview);
+    } catch (e: any) {
+      console.error("[MINI_CRM] Overview Error:", e);
+      res.status(500).json({ error: "Impossible de récupérer l'aperçu CRM" });
+    }
+  });
+
+  app.get("/api/crm/leads", requireTenantAuth, async (req, res) => {
+    try {
+      const companyId = (req as any).companyId;
+      const snap = await db.collection('leads').where('companyId', '==', companyId).limit(100).get();
+      const leads = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(leads);
+    } catch (e: any) {
+      console.error("[MINI_CRM] Get Leads Error:", e);
+      res.status(500).json({ error: "Erreur de récupération des leads" });
+    }
+  });
+
+  app.post("/api/crm/leads", requireTenantAuth, async (req, res) => {
+    try {
+      const companyId = (req as any).companyId;
+      const { name, phone, email, dealValue, status, notes } = req.body;
+
+      if (!phone || !name) {
+        return res.status(400).json({ error: "Nom et numéro de téléphone requis" });
+      }
+
+      const leadRef = db.collection('leads').doc(phone);
+      const payload = {
+        id: phone,
+        companyId,
+        name,
+        phone,
+        email: email || '',
+        dealValue: Number(dealValue) || 0,
+        status: status || 'NEW',
+        notes: notes || '',
+        updatedAt: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp()
+      };
+
+      await leadRef.set(payload, { merge: true });
+      console.log('[MINI_CRM] Updated lead for company:', companyId, 'phone:', `${phone.slice(0, 5)}***`);
+      res.json({ success: true, lead: payload });
+    } catch (e: any) {
+      console.error("[MINI_CRM] Save Lead Error:", e);
+      res.status(500).json({ error: "Erreur d'enregistrement du lead" });
+    }
+  });
 
   // Company Business Knowledge Training Endpoints
   app.get("/api/company/knowledge", requireTenantAuth, async (req, res) => {
