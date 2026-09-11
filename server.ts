@@ -7,10 +7,12 @@ import { bootstrapEnv } from "./src/env-init";
 import { WABAService } from "./src/services/waba.service";
 import { KnowledgeBaseService } from "./src/services/knowledge-base.service";
 import { SubscriptionService, PLAN_CONFIGS, PlanTier } from "./src/services/subscription.service";
+import { LLMService } from "./src/services/llm.service";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { GoogleGenAI } from "@google/genai";
+import { LLMOrchestratorService } from "./src/services/llm-orchestrator.service";
 
 // Initialize Firebase Admin
 if (!getApps().length) {
@@ -228,30 +230,108 @@ function getAIClient(): GoogleGenAI {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Helper to resolve companyId dynamically from Firestore if not directly provided
-async function resolveTenantCompanyId(phone: string, phoneNumberId?: string, explicitCompanyId?: string): Promise<string | null> {
-  if (explicitCompanyId) return explicitCompanyId;
+async function resolveTenantCompanyId(
+  phone: string,
+  phoneNumberId?: string,
+  explicitCompanyId?: string,
+  requestId?: string
+): Promise<string | null> {
+  const correlationId = requestId || crypto.randomUUID();
 
-  // 1. Check existing lead document
-  const leadDoc = await db.collection('leads').doc(phone).get();
+  console.log(
+    `[WEBHOOK][TENANT] requestId=${correlationId} resolution=start ` +
+    `explicitCompanyId=${Boolean(explicitCompanyId)} ` +
+    `phoneNumberIdPresent=${Boolean(phoneNumberId)}`
+  );
+
+  // 1. Explicit tenant ID is accepted only from trusted server-side callers.
+  if (explicitCompanyId) {
+    console.log(
+      `[WEBHOOK][TENANT] requestId=${correlationId} resolution=explicit`
+    );
+    return explicitCompanyId;
+  }
+
+  // 2. Existing lead mapping.
+  console.log(
+    `[WEBHOOK][TENANT] requestId=${correlationId} leadLookup=start`
+  );
+
+  const leadDoc = await db.collection("leads").doc(phone).get();
+
   if (leadDoc.exists && leadDoc.data()?.companyId) {
-    return leadDoc.data()?.companyId;
+    const companyId = leadDoc.data()?.companyId as string;
+
+    console.log(
+      `[WEBHOOK][TENANT] requestId=${correlationId} ` +
+      `leadLookup=resolved companyIdPresent=true`
+    );
+
+    return companyId;
   }
 
-  // 2. Check company by WABA phoneNumberId
+  console.log(
+    `[WEBHOOK][TENANT] requestId=${correlationId} leadLookup=unresolved`
+  );
+
+  // 3. Authoritative WABA tenant mapping.
+  // Firestore stores the WhatsApp phone number ID under:
+  // companies/{companyId}.waba.phoneNumberId
   if (phoneNumberId) {
-    const compSnap = await db.collection('companies').where('phoneNumberId', '==', phoneNumberId).limit(1).get();
+    console.log(
+      `[WEBHOOK][TENANT] requestId=${correlationId} companyLookup=start`
+    );
+
+    const compSnap = await db
+      .collection("companies")
+      .where("waba.phoneNumberId", "==", phoneNumberId)
+      .limit(1)
+      .get();
+
     if (!compSnap.empty) {
-      return compSnap.docs[0].id;
+      const companyId = compSnap.docs[0].id;
+
+      console.log(
+        `[WEBHOOK][TENANT] requestId=${correlationId} ` +
+        `companyLookup=resolved companyIdPresent=true`
+      );
+
+      return companyId;
     }
+
+    console.log(
+      `[WEBHOOK][TENANT] requestId=${correlationId} companyLookup=unresolved`
+    );
+  } else {
+    console.log(
+      `[WEBHOOK][TENANT] requestId=${correlationId} ` +
+      `companyLookup=skipped_no_phoneNumberId`
+    );
   }
 
-  // 3. Fail closed if tenant mapping cannot be determined
+  // 4. FAIL CLOSED.
+  // Never assign an arbitrary/global tenant.
+  console.error(
+    `[WEBHOOK][TENANT] requestId=${correlationId} resolution=FAILED_CLOSED`
+  );
+
   return null;
 }
 
 // Lead Scoring & Management Logic
-async function handleIncomingMessage(phone: string, content: string, incomingCompanyId?: string, phoneNumberId?: string) {
-    console.log('[WEBHOOK] Incoming text:', content, 'from:', phone);
+async function handleIncomingMessage(
+  phone: string,
+  content: string,
+  incomingCompanyId?: string,
+  phoneNumberId?: string,
+  requestId?: string
+) {
+    const correlationId = requestId || crypto.randomUUID();
+
+    console.log(
+      `[WEBHOOK][PARSED] requestId=${correlationId} incomingMessage=true phoneNumberIdPresent=${Boolean(phoneNumberId)}`
+    );
+
     const leadRef = db.collection('leads').doc(phone);
     const messageRef = db.collection('messages').doc();
 
@@ -265,61 +345,139 @@ async function handleIncomingMessage(phone: string, content: string, incomingCom
         timestamp
     });
 
-    console.log('[WEBHOOK] Lead synchronized');
+    console.log(
+      `[WEBHOOK][TENANT] requestId=${correlationId} leadSynchronization=completed`
+    );
 
     // 2. Manage Lead & AI Reply
     const leadDoc = await leadRef.get();
     const isLeadDocPresent = leadDoc.exists === true;
     let history = isLeadDocPresent ? leadDoc.data()?.history || [] : [];
 
-    const resolvedCompanyId = await resolveTenantCompanyId(phone, phoneNumberId, incomingCompanyId);
+    const resolvedCompanyId = await resolveTenantCompanyId(
+      phone,
+      phoneNumberId,
+      incomingCompanyId,
+      correlationId
+    );
 
     if (!resolvedCompanyId) {
-      console.error('[WEBHOOK] FAIL CLOSED: Unresolved tenant companyId for phone:', `${phone.slice(0, 5)}***`);
+      console.error(
+        `[WEBHOOK][TENANT] requestId=${correlationId} resolution=FAILED_CLOSED`
+      );
+
       const errorMessage = "Impossible de déterminer l'espace entreprise associé à cette conversation. Veuillez contacter le support.";
-      await WABAService.sendMessage({ to: phone, text: errorMessage });
+
+      console.log(
+        `[WEBHOOK][WABA] requestId=${correlationId} outbound=tenant_resolution_error`
+      );
+
+      await WABAService.sendMessage({
+        to: phone,
+        text: errorMessage
+      });
+
       return errorMessage;
     }
+
+    console.log(
+      `[WEBHOOK][TENANT] requestId=${correlationId} companyResolved=true`
+    );
 
     // Verify Subscription Server-side Access using SubscriptionService
     const subRef = db.collection('subscriptions').doc(resolvedCompanyId);
     const subSnap = await subRef.get();
     const subDetails = SubscriptionService.getSubscriptionDetails(
-      subSnap.exists === true ? (subSnap.data() as any) : { companyId: resolvedCompanyId, plan: 'starter', status: 'TRIAL' }
+      subSnap.exists === true ? (subSnap.data() as any) : {
+        companyId: resolvedCompanyId,
+        plan: 'starter',
+        status: 'TRIAL'
+      }
     );
+
     const accessCheck = SubscriptionService.verifySubscriptionAccess(subDetails);
+
     if (!accessCheck.allowed) {
-      console.log('[WEBHOOK] BLOCKED: Subscription or Trial Expired for company:', resolvedCompanyId, 'reason:', accessCheck.reason);
-      const paywallMessage = accessCheck.reason || "Votre période d'essai de 7 jours est expirée. Rendez-vous sur votre dashboard Fiko Connect pour réactiver votre forfait.";
-      await WABAService.sendMessage({ to: phone, text: paywallMessage });
+      console.log(
+        `[WEBHOOK][TENANT] requestId=${correlationId} subscription=BLOCKED reason=${accessCheck.reason || 'subscription_denied'}`
+      );
+
+      const paywallMessage = accessCheck.reason ||
+        "Votre période d'essai de 7 jours est expirée. Rendez-vous sur votre dashboard Fiko Connect pour réactiver votre forfait.";
+
+      console.log(
+        `[WEBHOOK][WABA] requestId=${correlationId} outbound=paywall`
+      );
+
+      await WABAService.sendMessage({
+        to: phone,
+        text: paywallMessage
+      });
+
       return paywallMessage;
     }
 
-    console.log('[WEBHOOK] Calling AI');
-    console.log('[ORCHESTRATOR] Trying provider: gemini-1.5-flash');
-    const knowledgeContext = await KnowledgeBaseService.buildPromptContextAsync(resolvedCompanyId, db);
-    const prompt = `${knowledgeContext}\nLead: ${phone}. History: ${JSON.stringify(history.slice(-5))}. New message: ${content}. Reply professionally and suggest next step to convert this lead.`;
-    const result = await getAIClient().models.generateContent({ model: "gemini-1.5-flash", contents: prompt });
-    const reply = result.text || "Merci pour votre message.";
-    console.log('[WEBHOOK] AI response generated');
+    const knowledgeContext =
+      await KnowledgeBaseService.buildPromptContextAsync(
+        resolvedCompanyId,
+        db
+      );
+
+    const prompt =
+      `${knowledgeContext}\nLead: ${phone}. History: ${JSON.stringify(history.slice(-5))}. New message: ${content}. Reply professionally and suggest next step to convert this lead.`;
+
+    console.log(
+      `[WEBHOOK][AI] requestId=${correlationId} orchestrator=start`
+    );
+
+    const llmResponse = await LLMOrchestratorService.generate({
+      prompt,
+      requestId: correlationId
+    });
+
+    const reply = llmResponse.text || "Merci pour votre message.";
+
+    console.log(
+      `[WEBHOOK][AI] requestId=${correlationId} ` +
+      `provider=${llmResponse.provider} ` +
+      `model=${llmResponse.model} ` +
+      `orchestrator=completed`
+    );
 
     // 3. Update Lead
-    const updatedHistory = [...history, { role: 'user', content }, { role: 'assistant', content: reply }];
-    
+    const updatedHistory = [
+      ...history,
+      { role: 'user', content },
+      { role: 'assistant', content: reply }
+    ];
+
     await leadRef.set({
         phone,
         companyId: resolvedCompanyId,
-        status: 'WARM', // Simple scoring logic
+        status: 'WARM',
         history: updatedHistory,
         updatedAt: timestamp
     }, { merge: true });
 
     // 4. Send WhatsApp Outbound Message
-    console.log('[WEBHOOK] Sending WhatsApp response');
-    await WABAService.sendMessage({ to: phone, text: reply });
+    console.log(
+      `[WEBHOOK][WABA] requestId=${correlationId} outbound=reply start`
+    );
+
+    await WABAService.sendMessage({
+      to: phone,
+      text: reply
+    });
+
+    console.log(
+      `[WEBHOOK][WABA] requestId=${correlationId} outbound=reply completed`
+    );
 
     return reply;
 }
+
+// Lead Scoring & Management Logic
+
 
 async function startServer() {
   await bootstrapEnv();
@@ -678,18 +836,63 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
   };
 
   const webhookHandlerPost = async (req: express.Request, res: express.Response) => {
-    console.log('[WEBHOOK] Meta event received');
-    const entry = req.body.entry?.[0]?.changes?.[0]?.value;
-    if (entry?.messages?.[0]) {
-      const message = entry.messages[0];
+    const requestId = crypto.randomUUID();
+
+    console.log(
+  `[WEBHOOK][RAW] requestId=${requestId} body=${JSON.stringify(req.body)}`
+);
+
+    console.log(`[WEBHOOK][RECEIVED] requestId=${requestId}`);
+
+    try {
+      const entry = req.body.entry?.[0]?.changes?.[0]?.value;
+      const message = entry?.messages?.[0];
+
+      if (!message) {
+        console.log(`[WEBHOOK][PARSED] requestId=${requestId} message=false`);
+        return res.sendStatus(200);
+      }
+
       const phone = message.from;
       const content = message.text?.body || "";
       const phoneNumberId = entry.metadata?.phone_number_id;
-      
-      const reply = await handleIncomingMessage(phone, content, undefined, phoneNumberId);
-      console.log("[WEBHOOK] Reply processed:", reply);
+
+      console.log(
+        `[WEBHOOK][PARSED] requestId=${requestId} message=true phoneNumberIdPresent=${Boolean(phoneNumberId)}`
+      );
+
+      console.log(
+        `[WEBHOOK][TENANT] requestId=${requestId} tenantResolution=start`
+      );
+
+      console.log(
+        `[WEBHOOK][AI] requestId=${requestId} handleIncomingMessage=start`
+      );
+
+      const reply = await handleIncomingMessage(
+        phone,
+        content,
+        undefined,
+        phoneNumberId,
+        requestId
+      );
+
+      console.log(
+        `[WEBHOOK][WABA] requestId=${requestId} outboundProcessing=completed`
+      );
+
+      console.log(
+        `[WEBHOOK][COMPLETED] requestId=${requestId}`
+      );
+
+      return res.sendStatus(200);
+    } catch (error: any) {
+      console.error(
+        `[WEBHOOK][ERROR] requestId=${requestId} error=${error?.message || "unknown_error"}`
+      );
+
+      return res.sendStatus(500);
     }
-    res.sendStatus(200);
   };
 
   app.get("/api/webhook", webhookHandlerGet);
