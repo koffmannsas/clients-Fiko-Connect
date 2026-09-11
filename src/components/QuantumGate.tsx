@@ -273,7 +273,7 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
       setOnboardStep(5);
       const userCredential = await createUserWithEmailAndPassword(auth, emailAddress.trim().toLowerCase(), onboardPassword);
       const uid = userCredential.user.uid;
-      const companyId = 'co_' + Math.random().toString(36).substr(2, 9);
+      const companyId = 'co_' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '').substring(0, 12) : Math.random().toString(36).substr(2, 9));
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       setOnboardStep(6);
@@ -288,7 +288,7 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
         status: 'active',
         createdAt: new Date().toISOString()
       };
-      await setDoc(userRef, userPayload).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${uid}`));
+      await setDoc(userRef, userPayload);
 
       const companyRef = doc(db, 'companies', companyId);
       const companyPayload = {
@@ -297,10 +297,11 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
         industry: 'Prestations de Service',
         country: 'CI',
         whatsappNumber: whatsappNumber.trim(),
+        phoneNumberId: whatsappNumber.trim().replace(/[^0-9]/g, ""),
         ownerId: uid,
         createdAt: new Date().toISOString()
       };
-      await setDoc(companyRef, companyPayload).catch(err => handleFirestoreError(err, OperationType.WRITE, `companies/${companyId}`));
+      await setDoc(companyRef, companyPayload);
 
       // Step 7: Create 7-day Trial Subscription
       setOnboardStep(7);
@@ -316,7 +317,7 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
         maxContacts: 10,
         createdAt: now.toISOString()
       };
-      await setDoc(subscriptionRef, subscriptionPayload).catch(err => handleFirestoreError(err, OperationType.WRITE, `subscriptions/${companyId}`));
+      await setDoc(subscriptionRef, subscriptionPayload);
 
       // Step 8: Deploy Agent & Knowledge Base
       setOnboardStep(8);
@@ -326,7 +327,7 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
         messagesProcessedCount: 0,
         cognitiveTokensCount: 2500,
         updatedAt: new Date().toISOString()
-      }).catch(err => handleFirestoreError(err, OperationType.WRITE, `fiko_memory/${companyId}`));
+      });
 
       const agentRef = doc(db, 'agents', companyId);
       await setDoc(agentRef, {
@@ -336,7 +337,7 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
         status: 'online',
         autoPilot: true,
         createdAt: new Date().toISOString()
-      }).catch(err => handleFirestoreError(err, OperationType.WRITE, `agents/${companyId}`));
+      });
 
       setOnboardStep(9);
     } catch (err: any) {
@@ -1061,9 +1062,13 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
                     setLoading(true);
                     try {
                       const targetCompanyId = userCompanyId || `co_${currentUser.uid}`;
+                    const token = currentUser ? await currentUser.getIdToken() : '';
                       const res = await fetch('/api/subscription/checkout', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                      headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                      },
                         body: JSON.stringify({ companyId: targetCompanyId, plan: selectedPlan })
                       });
                       const data = await res.json();

@@ -7,6 +7,7 @@ import { bootstrapEnv } from "./src/env-init";
 import { WABAService } from "./src/services/waba.service";
 import { KnowledgeBaseService } from "./src/services/knowledge-base.service";
 import { SubscriptionService, PLAN_CONFIGS, PlanTier } from "./src/services/subscription.service";
+import { MiniCRMService } from "./src/services/mini-crm.service";
 import { LLMService } from "./src/services/llm.service";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
@@ -326,6 +327,20 @@ async function handleIncomingMessage(
   phoneNumberId?: string,
   requestId?: string
 ) {
+    // Native WhatsApp typing indicator — non-blocking / fail-safe
+    try {
+      console.log(
+        '[WEBHOOK][WABA] Triggering native WhatsApp typing indicator for:',
+        `${phone.slice(0, 5)}***`
+      );
+      await WABAService.sendTypingIndicator({ to: phone });
+    } catch (typingErr) {
+      console.warn(
+        '[WEBHOOK][WABA] Non-blocking typing indicator error:',
+        typingErr
+      );
+    }
+
     const correlationId = requestId || crypto.randomUUID();
 
     console.log(
@@ -480,6 +495,56 @@ async function handleIncomingMessage(
 
 
 async function startServer() {
+
+  // Middleware helper to verify Firebase bearer token and resolve tenant companyId
+  const requireTenantAuth = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const authHeader = req.headers.authorization;
+    const requestedCompanyId = req.query.companyId as string || req.body.companyId as string;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        error: "UNAUTHORIZED",
+        message: "Authentification requise pour cette opération."
+      });
+    }
+
+    const token = authHeader.split("Bearer ")[1];
+
+    try {
+      const decodedToken = await getAdminAuth().verifyIdToken(token);
+      const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+
+      if (!userDoc.exists || !userDoc.data()?.companyId) {
+        return res.status(403).json({
+          error: "FORBIDDEN",
+          message: "Espace entreprise non trouvé pour cet utilisateur."
+        });
+      }
+
+      const userCompanyId = userDoc.data()?.companyId;
+
+      if (requestedCompanyId && requestedCompanyId !== userCompanyId) {
+        return res.status(403).json({
+          error: "FORBIDDEN",
+          message: "Accès refusé pour cet espace entreprise."
+        });
+      }
+
+      (req as any).companyId = userCompanyId;
+      (req as any).uid = decodedToken.uid;
+
+      next();
+    } catch (err) {
+      console.error("[AUTH] Token verification failed:", err);
+
+      return res.status(401).json({
+        error: "UNAUTHORIZED",
+        message: "Jeton d'authentification invalide."
+      });
+    }
+  };
+
+
   await bootstrapEnv();
 
   const app = express();
@@ -560,6 +625,89 @@ async function startServer() {
       res.json({ success: true, verified: true });
     } catch (e: any) {
       res.status(500).json({ error: "Vérification échouée" });
+    }
+  });
+
+  // Mini CRM Endpoints — additive V1.3.0, tenant-authenticated
+  app.get("/api/crm/overview", requireTenantAuth, async (req, res) => {
+    try {
+      const companyId = (req as any).companyId;
+      const subSnap = await db.collection("subscriptions").doc(companyId).get();
+      const plan: PlanTier =
+        subSnap.exists && subSnap.data()?.plan
+          ? subSnap.data()?.plan
+          : "starter";
+
+      const overview = await MiniCRMService.getOverviewAsync(companyId, plan, db);
+      res.json(overview);
+    } catch (e: any) {
+      console.error("[MINI_CRM] Overview Error:", e);
+      res.status(500).json({ error: "Impossible de récupérer l'aperçu CRM" });
+    }
+  });
+
+  app.get("/api/crm/leads", requireTenantAuth, async (req, res) => {
+    try {
+      const companyId = (req as any).companyId;
+      const snap = await db
+        .collection("leads")
+        .where("companyId", "==", companyId)
+        .limit(100)
+        .get();
+
+      const leads = snap.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+
+      res.json(leads);
+    } catch (e: any) {
+      console.error("[MINI_CRM] Get Leads Error:", e);
+      res.status(500).json({ error: "Erreur de récupération des leads" });
+    }
+  });
+
+  app.post("/api/crm/leads", requireTenantAuth, async (req, res) => {
+    try {
+      const companyId = (req as any).companyId;
+      const { name, phone, email, dealValue, status, notes } = req.body;
+
+      if (!phone || !name) {
+        return res.status(400).json({
+          error: "Nom et numéro de téléphone requis",
+        });
+      }
+
+      const leadRef = db.collection("leads").doc(phone);
+
+      const payload = {
+        id: phone,
+        companyId,
+        name,
+        phone,
+        email: email || "",
+        dealValue: Number(dealValue) || 0,
+        status: status || "NEW",
+        notes: notes || "",
+        updatedAt: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
+      };
+
+      await leadRef.set(payload, { merge: true });
+
+      console.log(
+        "[MINI_CRM] Updated lead for company:",
+        companyId,
+        "phone:",
+        `${phone.slice(0, 5)}***`
+      );
+
+      res.json({ success: true, lead: payload });
+    } catch (e: any) {
+      console.error("[MINI_CRM] Save Lead Error:", e);
+      res.status(500).json({
+        error: "Erreur d'enregistrement du lead",
+      });
     }
   });
 
