@@ -450,6 +450,51 @@ async function startServer() {
     }
   };
 
+  // Client Portal Endpoints Protected by requireTenantAuth
+  app.get("/api/client/me", requireTenantAuth, async (req, res) => {
+    try {
+      const uid = (req as any).uid;
+      const companyId = (req as any).companyId;
+
+      const userSnap = await db.collection("users").doc(uid).get();
+      const companySnap = await db.collection("companies").doc(companyId).get();
+      const subSnap = await db.collection("subscriptions").doc(companyId).get();
+
+      res.json({
+        user: userSnap.exists ? userSnap.data() : null,
+        company: companySnap.exists ? companySnap.data() : null,
+        subscription: subSnap.exists ? subSnap.data() : null
+      });
+    } catch (e: any) {
+      console.error("[CLIENT_PORTAL] Fetch Profile Error:", e);
+      res.status(500).json({ error: "Impossible de récupérer le profil client" });
+    }
+  });
+
+  app.post("/api/client/tenant", requireTenantAuth, async (req, res) => {
+    try {
+      const companyId = (req as any).companyId;
+      const { name, industry, country, whatsappNumber } = req.body;
+
+      const companyRef = db.collection("companies").doc(companyId);
+      const updatePayload: any = { updatedAt: FieldValue.serverTimestamp() };
+      if (name) updatePayload.name = name;
+      if (industry) updatePayload.industry = industry;
+      if (country) updatePayload.country = country;
+      if (whatsappNumber) {
+        updatePayload.whatsappNumber = whatsappNumber;
+        updatePayload.phoneNumberId = whatsappNumber.replace(/[^0-9]/g, "");
+      }
+
+      await companyRef.set(updatePayload, { merge: true });
+      console.log('[CLIENT_PORTAL] Updated tenant company details:', companyId);
+      res.json({ success: true, message: "Informations entreprise mises à jour avec succès" });
+    } catch (e: any) {
+      console.error("[CLIENT_PORTAL] Update Tenant Error:", e);
+      res.status(500).json({ error: "Impossible de mettre à jour le tenant" });
+    }
+  });
+
   // Mini CRM Endpoints Protected by requireTenantAuth
   app.get("/api/crm/overview", requireTenantAuth, async (req, res) => {
     try {
