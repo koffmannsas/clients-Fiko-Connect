@@ -95,7 +95,7 @@ export class LLMOrchestratorService {
       throw new Error("GEMINI_API_KEY_MISSING");
     }
 
-    const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+    const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
     console.log(
       `${logPrefix(requestId)} provider=gemini model=${model} start`
@@ -334,16 +334,12 @@ export class LLMOrchestratorService {
       call: () => Promise<LLMResponse>;
     }> = [
       {
-        name: "deepseek",
-        call: () => this.callDeepSeek(prompt, requestId)
-      },
-      {
-        name: "gemini",
-        call: () => this.callGemini(prompt, requestId)
-      },
-      {
         name: "gpt",
         call: () => this.callGPT(prompt, requestId)
+      },
+      {
+        name: "deepseek",
+        call: () => this.callDeepSeek(prompt, requestId)
       },
       {
         name: "freellmapi",

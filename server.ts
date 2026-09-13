@@ -35,7 +35,7 @@ async function preseedDemoData(adminDb: any) {
         icon: "👗",
         desc: "Optimisé pour le prêt-à-porter, gestion des tailles et coloris.",
         status: "active",
-        model: "gemini-1.5-flash",
+        model: "gemini-2.5-flash",
         instructions: "Vous êtes un vendeur expert en mode. Répondez au client avec courtoisie."
       },
       {
@@ -45,7 +45,7 @@ async function preseedDemoData(adminDb: any) {
         icon: "🍔",
         desc: "Gestion de menu, prise de commande et suivi des réservations.",
         status: "active",
-        model: "gemini-1.5-flash",
+        model: "gemini-2.5-flash",
         instructions: "Vous êtes le sommelier/serveur virtuel Fiko. Conseillez nos plats signature."
       },
       {
@@ -55,7 +55,7 @@ async function preseedDemoData(adminDb: any) {
         icon: "🏢",
         desc: "Capture de budget et fiches de visites de villas ou terrains en Côte d'Ivoire.",
         status: "active",
-        model: "gemini-1.5-flash",
+        model: "gemini-2.5-flash",
         instructions: "Vous effectuez l'accueil des locataires et acheteurs potentiels de villas de standing à Cocody."
       }
     ];
@@ -325,7 +325,8 @@ async function handleIncomingMessage(
   content: string,
   incomingCompanyId?: string,
   phoneNumberId?: string,
-  requestId?: string
+  requestId?: string,
+  messageId?: string
 ) {
     // Native WhatsApp typing indicator — non-blocking / fail-safe
     try {
@@ -333,7 +334,7 @@ async function handleIncomingMessage(
         '[WEBHOOK][WABA] Triggering native WhatsApp typing indicator for:',
         `${phone.slice(0, 5)}***`
       );
-      await WABAService.sendTypingIndicator({ to: phone });
+      await WABAService.sendTypingIndicator({ to: phone, messageId });
     } catch (typingErr) {
       console.warn(
         '[WEBHOOK][WABA] Non-blocking typing indicator error:',
@@ -798,7 +799,7 @@ Format your response as a JSON array where each object has:
 - content: "the message text"`;
 
           const result = await getAIClient().models.generateContent({ 
-              model: "gemini-1.5-flash",
+              model: "gemini-2.5-flash",
               contents: prompt,
               config: {
                   responseMimeType: "application/json"
@@ -859,7 +860,7 @@ OUTPUT JSON STRICT :
 }`;
 
           const result = await getAIClient().models.generateContent({ 
-              model: "gemini-1.5-flash",
+              model: "gemini-2.5-flash",
               contents: prompt,
               config: {
                   responseMimeType: "application/json"
@@ -899,7 +900,7 @@ Réécrire complètement ce message pour :
 Retourne uniquement le texte du nouveau message, sans introduction ni format JSON, juste le texte prêt à envoyer. Le message doit paraître naturel, pas trop formel (c'est WhatsApp), utiliser des emojis avec parcimonie.`;
 
           const result = await getAIClient().models.generateContent({ 
-              model: "gemini-1.5-flash",
+              model: "gemini-2.5-flash",
               contents: prompt
           });
           
@@ -957,15 +958,29 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
 
       const knowledgeContext = await KnowledgeBaseService.buildPromptContextAsync(companyId, db);
       const prompt = `${knowledgeContext}\nUser message: ${message}`;
-      const result = await getAIClient().models.generateContent({ model: "gemini-1.5-flash", contents: prompt });
-      const replyText = result.text || "FIKO_WHATSAPP_OUTBOUND_OK";
+
+      const llmResponse = await LLMOrchestratorService.generate({
+        prompt,
+        requestId: crypto.randomUUID()
+      });
+
+      const replyText = llmResponse.text || "Merci pour votre message.";
+
+      console.log(
+        `[AI CHAT] provider=${llmResponse.provider} model=${llmResponse.model}`
+      );
 
       const wabaResult = await WABAService.sendMessage({
         to: targetPhone,
         text: replyText
       });
 
-      res.json({ reply: replyText, wabaResult });
+      res.json({
+        reply: replyText,
+        provider: llmResponse.provider,
+        model: llmResponse.model,
+        wabaResult
+      });
     } catch (e: any) {
       console.error("AI Chat Error:", e);
       res.status(500).json({ error: "Chat failed", details: e.message });
@@ -1002,6 +1017,7 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
       }
 
       const phone = message.from;
+        const messageId = message.id;
       const content = message.text?.body || "";
       const phoneNumberId = entry.metadata?.phone_number_id;
 
@@ -1022,7 +1038,8 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
         content,
         undefined,
         phoneNumberId,
-        requestId
+        requestId,
+        messageId
       );
 
       console.log(

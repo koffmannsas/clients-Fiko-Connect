@@ -13,6 +13,7 @@ const client = new SecretManagerServiceClient();
 const SECRET_MAPPING: Record<string, string> = {
   DEEPSEEK_API_KEY: "fiko-deepseek-api-key",
   GEMINI_API_KEY: "fiko-gemini-api-key",
+  OPENAI_API_KEY: "fiko-openai-api-key",
 };
 
 function logSecret(key: string, source: string, status: string) {
