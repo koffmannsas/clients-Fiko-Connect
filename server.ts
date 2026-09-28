@@ -215,7 +215,7 @@ async function initMetaReviewAccount() {
 }
 
 // Fire async background initialization
-initMetaReviewAccount();
+// initMetaReviewAccount(); // DISABLED for production promotion: no automatic Meta Review account/demo seeding
 
 // Initialize Gemini AI (Lazy initialization)
 let aiClient: GoogleGenAI | null = null;
@@ -245,42 +245,14 @@ async function resolveTenantCompanyId(
     `phoneNumberIdPresent=${Boolean(phoneNumberId)}`
   );
 
-  // 1. Explicit tenant ID is accepted only from trusted server-side callers.
-  if (explicitCompanyId) {
-    console.log(
-      `[WEBHOOK][TENANT] requestId=${correlationId} resolution=explicit`
-    );
-    return explicitCompanyId;
-  }
-
-  // 2. Existing lead mapping.
-  console.log(
-    `[WEBHOOK][TENANT] requestId=${correlationId} leadLookup=start`
-  );
-
-  const leadDoc = await db.collection("leads").doc(phone).get();
-
-  if (leadDoc.exists && leadDoc.data()?.companyId) {
-    const companyId = leadDoc.data()?.companyId as string;
-
-    console.log(
-      `[WEBHOOK][TENANT] requestId=${correlationId} ` +
-      `leadLookup=resolved companyIdPresent=true`
-    );
-
-    return companyId;
-  }
-
-  console.log(
-    `[WEBHOOK][TENANT] requestId=${correlationId} leadLookup=unresolved`
-  );
-
-  // 3. Authoritative WABA tenant mapping.
-  // Firestore stores the WhatsApp phone number ID under:
-  // companies/{companyId}.waba.phoneNumberId
+  // Webhook Meta: the incoming phone_number_id is the authoritative
+  // identity of the WhatsApp Business channel.
+  //
+  // Do NOT resolve a webhook tenant from the customer's phone/lead.
   if (phoneNumberId) {
     console.log(
-      `[WEBHOOK][TENANT] requestId=${correlationId} companyLookup=start`
+      `[WEBHOOK][TENANT] requestId=${correlationId} ` +
+      `wabaLookup=start`
     );
 
     const compSnap = await db
@@ -294,29 +266,264 @@ async function resolveTenantCompanyId(
 
       console.log(
         `[WEBHOOK][TENANT] requestId=${correlationId} ` +
-        `companyLookup=resolved companyIdPresent=true`
+        `wabaLookup=resolved companyIdPresent=true`
       );
 
       return companyId;
     }
 
-    console.log(
-      `[WEBHOOK][TENANT] requestId=${correlationId} companyLookup=unresolved`
-    );
-  } else {
-    console.log(
+    console.error(
       `[WEBHOOK][TENANT] requestId=${correlationId} ` +
-      `companyLookup=skipped_no_phoneNumberId`
+      `wabaLookup=unresolved phoneNumberIdNotMapped=true`
     );
+
+    return null;
   }
 
-  // 4. FAIL CLOSED.
-  // Never assign an arbitrary/global tenant.
+  // Explicit company IDs are only valid for trusted non-webhook
+  // server-side callers. The current Meta webhook does not provide one.
+  if (explicitCompanyId) {
+    console.log(
+      `[WEBHOOK][TENANT] requestId=${correlationId} resolution=explicit`
+    );
+    return explicitCompanyId;
+  }
+
   console.error(
-    `[WEBHOOK][TENANT] requestId=${correlationId} resolution=FAILED_CLOSED`
+    `[WEBHOOK][TENANT] requestId=${correlationId} ` +
+    `resolution=FAILED_CLOSED reason=no_phoneNumberId`
   );
 
   return null;
+}
+
+// Production WABA context — tenant-bound Firestore Vault resolution
+async function loadWABAContext(companyId: string): Promise<{
+  company: any;
+  vault: any;
+} | null> {
+  if (!companyId) {
+    console.error("[WABA][TENANT] Missing companyId.");
+    return null;
+  }
+
+  try {
+    const [companySnap, vaultSnap] = await Promise.all([
+      db.collection("companies").doc(companyId).get(),
+      db.collection("vault").doc(companyId).get()
+    ]);
+
+    if (!companySnap.exists) {
+      console.error(
+        `[WABA][TENANT] company_not_found companyId=${companyId}`
+      );
+      return null;
+    }
+
+    if (!vaultSnap.exists) {
+      console.error(
+        `[WABA][TENANT] vault_not_found companyId=${companyId}`
+      );
+      return null;
+    }
+
+    const company = companySnap.data() || {};
+    const vault = vaultSnap.data() || {};
+
+    if (!company.waba?.phoneNumberId) {
+      console.error(
+        `[WABA][TENANT] phone_number_id_missing companyId=${companyId}`
+      );
+      return null;
+    }
+
+    if (!vault.wabaToken) {
+      console.error(
+        `[WABA][TENANT] waba_token_missing companyId=${companyId}`
+      );
+      return null;
+    }
+
+    return {
+      company,
+      vault
+    };
+  } catch (error: any) {
+    console.error(
+      `[WABA][TENANT] context_load_failed companyId=${companyId}`,
+      error?.message || "UNKNOWN_ERROR"
+    );
+    return null;
+  }
+}
+
+// Meta message processing state.
+// A deterministic document key + Firestore transaction prevents two
+// concurrent deliveries of the same Meta message.id from both executing AI.
+function getProcessedMessageRef(messageId: string) {
+  const key = crypto
+    .createHash("sha256")
+    .update(messageId)
+    .digest("hex");
+
+  return db.collection("processed_messages").doc(key);
+}
+
+async function claimIncomingMessage(
+  messageId: string,
+  companyId: string,
+  phoneNumberId: string,
+  requestId: string
+): Promise<"claimed" | "duplicate"> {
+  const ref = getProcessedMessageRef(messageId);
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (snap.exists) {
+      const data = snap.data() || {};
+
+      // Completed messages are always duplicates.
+      if (data.status === "completed") {
+        console.log(
+          `[WEBHOOK][IDEMPOTENCY] requestId=${requestId} ` +
+          `messageIdPresent=true status=completed duplicate=true`
+        );
+
+        return "duplicate";
+      }
+
+      // A processing claim is protected by a short lease.
+      // If the process crashed before completion, allow recovery
+      // after 5 minutes instead of permanently dropping the Meta retry.
+      if (data.status === "processing") {
+        const updatedAtMs =
+          typeof data.updatedAt?.toMillis === "function"
+            ? data.updatedAt.toMillis()
+            : 0;
+
+        const processingAgeMs = updatedAtMs > 0
+          ? Date.now() - updatedAtMs
+          : 0;
+
+        const processingLeaseMs = 5 * 60 * 1000;
+        const leaseExpired =
+          updatedAtMs > 0 && processingAgeMs >= processingLeaseMs;
+
+        if (!leaseExpired) {
+          console.log(
+            `[WEBHOOK][IDEMPOTENCY] requestId=${requestId} ` +
+            `messageIdPresent=true status=processing duplicate=true`
+          );
+
+          return "duplicate";
+        }
+
+        tx.update(ref, {
+          status: "processing",
+          companyId,
+          phoneNumberId,
+          retryAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp()
+        });
+
+        console.warn(
+          `[WEBHOOK][IDEMPOTENCY] requestId=${requestId} ` +
+          `messageIdPresent=true status=processing lease_expired=true retry=true`
+        );
+
+        return "claimed";
+      }
+
+      // A previous attempt explicitly failed. Allow a controlled retry.
+      tx.update(ref, {
+        status: "processing",
+        companyId,
+        phoneNumberId,
+        retryAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      });
+
+      console.log(
+        `[WEBHOOK][IDEMPOTENCY] requestId=${requestId} ` +
+        `messageIdPresent=true status=failed retry=true`
+      );
+
+      return "claimed";
+    }
+
+    tx.create(ref, {
+      messageId,
+      companyId,
+      phoneNumberId,
+      status: "processing",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp()
+    });
+
+    console.log(
+      `[WEBHOOK][IDEMPOTENCY] requestId=${requestId} ` +
+      `messageIdPresent=true status=processing claimed=true`
+    );
+
+    return "claimed";
+  });
+}
+
+async function completeIncomingMessage(
+  messageId: string,
+  requestId: string
+): Promise<void> {
+  const ref = getProcessedMessageRef(messageId);
+
+  await ref.set({
+    status: "completed",
+    completedAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  console.log(
+    `[WEBHOOK][IDEMPOTENCY] requestId=${requestId} ` +
+    `messageIdPresent=true status=completed`
+  );
+}
+
+async function failIncomingMessage(
+  messageId: string,
+  errorMessage: string,
+  requestId: string
+): Promise<void> {
+  const ref = getProcessedMessageRef(messageId);
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (snap.exists) {
+      const data = snap.data() || {};
+
+      // A completed message is terminal and must never be
+      // downgraded to failed by a late webhook error.
+      if (data.status === "completed") {
+        console.warn(
+          `[WEBHOOK][IDEMPOTENCY] requestId=${requestId} ` +
+          `messageIdPresent=true status=completed failure_ignored=true`
+        );
+        return;
+      }
+    }
+
+    tx.set(ref, {
+      status: "failed",
+      error: errorMessage.slice(0, 500),
+      failedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    console.log(
+      `[WEBHOOK][IDEMPOTENCY] requestId=${requestId} ` +
+      `messageIdPresent=true status=failed`
+    );
+  });
 }
 
 // Lead Scoring & Management Logic
@@ -328,48 +535,13 @@ async function handleIncomingMessage(
   requestId?: string,
   messageId?: string
 ) {
-    // Native WhatsApp typing indicator — non-blocking / fail-safe
-    try {
-      console.log(
-        '[WEBHOOK][WABA] Triggering native WhatsApp typing indicator for:',
-        `${phone.slice(0, 5)}***`
-      );
-      await WABAService.sendTypingIndicator({ to: phone, messageId });
-    } catch (typingErr) {
-      console.warn(
-        '[WEBHOOK][WABA] Non-blocking typing indicator error:',
-        typingErr
-      );
-    }
-
     const correlationId = requestId || crypto.randomUUID();
 
     console.log(
       `[WEBHOOK][PARSED] requestId=${correlationId} incomingMessage=true phoneNumberIdPresent=${Boolean(phoneNumberId)}`
     );
 
-    const leadRef = db.collection('leads').doc(phone);
-    const messageRef = db.collection('messages').doc();
-
-    const timestamp = FieldValue.serverTimestamp();
-
-    // 1. Save message
-    await messageRef.set({
-        conversationId: phone,
-        sender: 'client',
-        content,
-        timestamp
-    });
-
-    console.log(
-      `[WEBHOOK][TENANT] requestId=${correlationId} leadSynchronization=completed`
-    );
-
-    // 2. Manage Lead & AI Reply
-    const leadDoc = await leadRef.get();
-    const isLeadDocPresent = leadDoc.exists === true;
-    let history = isLeadDocPresent ? leadDoc.data()?.history || [] : [];
-
+    // 1. Resolve tenant from the authoritative Meta WABA channel first.
     const resolvedCompanyId = await resolveTenantCompanyId(
       phone,
       phoneNumberId,
@@ -388,17 +560,94 @@ async function handleIncomingMessage(
         `[WEBHOOK][WABA] requestId=${correlationId} outbound=tenant_resolution_error`
       );
 
-      await WABAService.sendMessage({
-        to: phone,
-        text: errorMessage
-      });
-
+      // Fail closed: no tenant means no tenant-bound WABA credentials.
+      // Do not fall back to a global/environment WhatsApp token.
       return errorMessage;
     }
 
     console.log(
       `[WEBHOOK][TENANT] requestId=${correlationId} companyResolved=true`
     );
+
+    // Load tenant-bound production WABA credentials from Firestore Vault.
+    const wabaContext = await loadWABAContext(resolvedCompanyId);
+
+    if (!wabaContext) {
+      console.error(
+        `[WEBHOOK][WABA] requestId=${correlationId} context=unavailable`
+      );
+      return "Configuration WhatsApp indisponible pour cet espace entreprise.";
+    }
+
+    // A Meta webhook message must have a stable message.id for safe
+    // idempotent processing.
+    if (!messageId || !phoneNumberId) {
+      console.error(
+        `[WEBHOOK][IDEMPOTENCY] requestId=${correlationId} ` +
+        `missing_message_identity=true`
+      );
+      return "Événement WhatsApp invalide.";
+    }
+
+    // Atomic claim: only one concurrent webhook delivery can execute AI.
+    const claim = await claimIncomingMessage(
+      messageId,
+      resolvedCompanyId,
+      phoneNumberId,
+      correlationId
+    );
+
+    if (claim === "duplicate") {
+      console.log(
+        `[WEBHOOK][COMPLETED] requestId=${correlationId} duplicate=true`
+      );
+      return "";
+    }
+
+    const leadRef = db.collection('leads').doc(phone);
+    const messageRef = db.collection('messages').doc();
+
+    const timestamp = FieldValue.serverTimestamp();
+
+    // 2. Save inbound message only after tenant identity is established.
+    await messageRef.set({
+        conversationId: phone,
+        sender: 'client',
+        content,
+        messageId,
+        companyId: resolvedCompanyId,
+        phoneNumberId,
+        timestamp
+    });
+
+    console.log(
+      `[WEBHOOK][TENANT] requestId=${correlationId} ` +
+      `leadSynchronization=completed companyResolved=true`
+    );
+
+    // 3. Manage Lead & AI Reply
+    const leadDoc = await leadRef.get();
+    const isLeadDocPresent = leadDoc.exists === true;
+    let history = isLeadDocPresent ? leadDoc.data()?.history || [] : [];
+
+    // Native WhatsApp typing indicator — tenant-bound / non-blocking / fail-safe
+    try {
+      console.log(
+        '[WEBHOOK][WABA] Triggering native WhatsApp typing indicator for:',
+        `${phone.slice(0, 5)}***`
+      );
+      await WABAService.sendTypingIndicator({
+        to: phone,
+        messageId,
+        vault: wabaContext.vault,
+        company: wabaContext.company
+      });
+    } catch (typingErr) {
+      console.warn(
+        '[WEBHOOK][WABA] Non-blocking typing indicator error:',
+        typingErr
+      );
+    }
 
     // Verify Subscription Server-side Access using SubscriptionService
     const subRef = db.collection('subscriptions').doc(resolvedCompanyId);
@@ -425,10 +674,20 @@ async function handleIncomingMessage(
         `[WEBHOOK][WABA] requestId=${correlationId} outbound=paywall`
       );
 
-      await WABAService.sendMessage({
+      const paywallResult = await WABAService.sendMessage({
         to: phone,
-        text: paywallMessage
+        text: paywallMessage,
+        vault: wabaContext.vault,
+        company: wabaContext.company
       });
+
+      if (!paywallResult.success) {
+        throw new Error(
+          `Meta WABA paywall delivery failed: ${JSON.stringify(paywallResult.error)}`
+        );
+      }
+
+      await completeIncomingMessage(messageId, correlationId);
 
       return paywallMessage;
     }
@@ -480,14 +739,24 @@ async function handleIncomingMessage(
       `[WEBHOOK][WABA] requestId=${correlationId} outbound=reply start`
     );
 
-    await WABAService.sendMessage({
+    const outboundResult = await WABAService.sendMessage({
       to: phone,
-      text: reply
+      text: reply,
+      vault: wabaContext.vault,
+      company: wabaContext.company
     });
+
+    if (!outboundResult.success) {
+      throw new Error(
+        `Meta WABA reply delivery failed: ${JSON.stringify(outboundResult.error)}`
+      );
+    }
 
     console.log(
       `[WEBHOOK][WABA] requestId=${correlationId} outbound=reply completed`
     );
+
+    await completeIncomingMessage(messageId, correlationId);
 
     return reply;
 }
@@ -549,10 +818,56 @@ async function startServer() {
   await bootstrapEnv();
 
   const app = express();
-  app.use(express.json());
+
+  // Capture raw body for Meta WhatsApp webhook signature verification.
+  // This does not alter JSON parsing for any other route.
+  app.use(express.json({
+    verify: (req, _res, buf) => {
+      const requestPath = (req as express.Request).path;
+      if (requestPath === "/api/webhook" || requestPath === "/api/webhooks/meta") {
+        (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+      }
+    }
+  }));
 
   // Hardened OTP Verification Store
   const otpStore = new Map<string, { code: string; expiresAt: number; attempts: number; lastRequestedAt: number }>();
+
+  // Meta WhatsApp webhook signature verification.
+  // Meta signs the exact raw HTTP body with the configured App Secret.
+  function verifyMetaWebhookSignature(req: express.Request): boolean {
+    const signature = req.get("X-Hub-Signature-256");
+    const rawBody = (req as express.Request & { rawBody?: Buffer }).rawBody;
+    const appSecret = process.env.WHATSAPP_APP_SECRET;
+
+    if (!signature || !rawBody || !appSecret) {
+      return false;
+    }
+
+    const [scheme, value] = signature.split("=");
+
+    if (
+      scheme !== "sha256" ||
+      !value ||
+      !/^[0-9a-fA-F]{64}$/.test(value)
+    ) {
+      return false;
+    }
+
+    const expected = crypto
+      .createHmac("sha256", appSecret)
+      .update(rawBody)
+      .digest("hex");
+
+    const receivedBuffer = Buffer.from(value, "hex");
+    const expectedBuffer = Buffer.from(expected, "hex");
+
+    if (receivedBuffer.length !== expectedBuffer.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
+  }
 
   // API routes
   app.get("/api/health", (req, res) => res.json({ status: "ok" }));
@@ -573,10 +888,24 @@ async function startServer() {
       const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
       otpStore.set(phone, { code, expiresAt, attempts: 0, lastRequestedAt: Date.now() });
 
+      // Pre-tenant onboarding uses the dedicated Fiko system WABA context.
+      // This is explicit onboarding infrastructure, not a tenant fallback.
+      const onboardingWabaContext = await loadWABAContext('fiko_system_master');
+
+      if (!onboardingWabaContext) {
+        console.error('[AUTH][OTP] System WABA context unavailable; OTP delivery blocked.');
+        return res.status(503).json({
+          error: "Service WhatsApp d'activation temporairement indisponible"
+        });
+      }
+
       console.log('[AUTH] OTP requested for phone:', `${phone.slice(0, 5)}***`);
+
       const wabaRes = await WABAService.sendMessage({
         to: phone,
-        text: `Votre code d'activation Fiko Connect est : ${code}`
+        text: `Votre code d'activation Fiko Connect est : ${code}`,
+        vault: onboardingWabaContext.vault,
+        company: onboardingWabaContext.company
       });
 
       console.log('[AUTH] OTP WhatsApp delivery:', wabaRes.success ? 'success' : 'failed');
@@ -935,6 +1264,17 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
         return res.status(400).json({ error: "TENANT_REQUIRED", message: "Un identifiant d'entreprise companyId est requis pour cette opération." });
       }
 
+      // Load tenant-bound production WABA credentials from Firestore Vault.
+      const wabaContext = await loadWABAContext(companyId);
+
+      if (!wabaContext) {
+        console.error(`[AI CHAT][WABA] companyId=${companyId} context=unavailable`);
+        return res.status(503).json({
+          error: "WABA_CONFIGURATION_UNAVAILABLE",
+          message: "Configuration WhatsApp indisponible pour cet espace entreprise."
+        });
+      }
+
       // Verify Subscription Access
       const subRef = db.collection('subscriptions').doc(companyId);
       const subSnap = await subRef.get();
@@ -951,7 +1291,9 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
         console.log('[WEBHOOK/WABA] Outbound test triggered');
         const wabaResult = await WABAService.sendMessage({
           to: targetPhone,
-          text: replyText
+          text: replyText,
+          vault: wabaContext.vault,
+          company: wabaContext.company
         });
         return res.json({ reply: replyText, wabaResult });
       }
@@ -972,7 +1314,9 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
 
       const wabaResult = await WABAService.sendMessage({
         to: targetPhone,
-        text: replyText
+        text: replyText,
+        vault: wabaContext.vault,
+        company: wabaContext.company
       });
 
       res.json({
@@ -1001,9 +1345,14 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
   const webhookHandlerPost = async (req: express.Request, res: express.Response) => {
     const requestId = crypto.randomUUID();
 
-    console.log(
-  `[WEBHOOK][RAW] requestId=${requestId} body=${JSON.stringify(req.body)}`
-);
+    // Meta WhatsApp Cloud API signature verification.
+    // Reject the request before parsing/processing any webhook payload.
+    if (!verifyMetaWebhookSignature(req)) {
+      console.warn(
+        `[WEBHOOK][SECURITY] requestId=${requestId} signature=invalid`
+      );
+      return res.sendStatus(401);
+    }
 
     console.log(`[WEBHOOK][RECEIVED] requestId=${requestId}`);
 
@@ -1055,6 +1404,24 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
       console.error(
         `[WEBHOOK][ERROR] requestId=${requestId} error=${error?.message || "unknown_error"}`
       );
+
+      try {
+        const entry = req.body.entry?.[0]?.changes?.[0]?.value;
+        const message = entry?.messages?.[0];
+
+        if (message?.id) {
+          await failIncomingMessage(
+            message.id,
+            error?.message || "unknown_error",
+            requestId
+          );
+        }
+      } catch (stateError: any) {
+        console.error(
+          `[WEBHOOK][IDEMPOTENCY] requestId=${requestId} ` +
+          `failure_state_update_error=${stateError?.message || "unknown_error"}`
+        );
+      }
 
       return res.sendStatus(500);
     }

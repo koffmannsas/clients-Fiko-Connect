@@ -6,8 +6,6 @@ dotenv.config();
 let isBootstrapped = false;
 
 const REQUIRED_SECRETS = [
-  "WHATSAPP_ACCESS_TOKEN",
-  "WHATSAPP_PHONE_NUMBER_ID",
   "WHATSAPP_VERIFY_TOKEN",
   "WHATSAPP_APP_SECRET",
 ];
@@ -64,8 +62,9 @@ export async function bootstrapEnv(): Promise<void> {
   }
 
   console.log("[WABA] Runtime configuration:", {
-    accessTokenPresent: Boolean(process.env.WHATSAPP_ACCESS_TOKEN),
-    phoneNumberIdPresent: Boolean(process.env.WHATSAPP_PHONE_NUMBER_ID),
+    verifyTokenPresent: Boolean(process.env.WHATSAPP_VERIFY_TOKEN),
+    appSecretPresent: Boolean(process.env.WHATSAPP_APP_SECRET),
+    credentialsSource: "firestore-vault",
   });
 
   console.log("[LLM] Runtime configuration:", {

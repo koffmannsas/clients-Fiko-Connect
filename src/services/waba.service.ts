@@ -31,13 +31,13 @@ export class WABAService {
     const { to, messageId, vault, company } = options;
     const recipient = this.normalizeRecipient(to);
 
-    const token = vault?.wabaToken || process.env.WHATSAPP_ACCESS_TOKEN;
-    const phoneId = company?.waba?.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const token = vault?.wabaToken;
+    const phoneId = company?.waba?.phoneNumberId;
 
     if (!token || !phoneId) {
       return {
         success: false,
-        error: 'Missing WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID'
+        error: 'Missing tenant-bound WABA credentials'
       };
     }
 
@@ -74,10 +74,14 @@ export class WABAService {
       const responseData = await response.json();
 
       if (!response.ok) {
-        console.warn(
-          '[WABA][TYPING] Meta response warning:',
-          responseData?.error?.message || response.statusText
-        );
+        console.warn('[WABA][TYPING] Meta response diagnostic:', {
+          httpStatus: response.status,
+          code: responseData?.error?.code,
+          type: responseData?.error?.type,
+          errorSubcode: responseData?.error?.error_subcode,
+          message: responseData?.error?.message,
+          fbtraceId: responseData?.error?.fbtrace_id
+        });
 
         return {
           success: false,
@@ -111,8 +115,8 @@ export class WABAService {
     const { to, text, vault, company } = options;
     const recipient = this.normalizeRecipient(to);
 
-    const token = vault?.wabaToken || process.env.WHATSAPP_ACCESS_TOKEN;
-    const phoneId = company?.waba?.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const token = vault?.wabaToken;
+    const phoneId = company?.waba?.phoneNumberId;
 
     const tokenPresent = Boolean(token);
     const phoneIdPresent = Boolean(phoneId);
@@ -128,7 +132,7 @@ export class WABAService {
         missingToken: !token,
         missingPhoneId: !phoneId
       });
-      return { success: false, error: 'Missing WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID' };
+      return { success: false, error: 'Missing tenant-bound WABA credentials' };
     }
 
     console.log('[WABA] Sending message:', {
