@@ -2,6 +2,12 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import crypto from "crypto";
+import { bootstrapEnv } from "./src/env-init";
+import { WABAService } from "./src/services/waba.service";
+import { KnowledgeBaseService } from "./src/services/knowledge-base.service";
+import { SubscriptionService, PLAN_CONFIGS, PlanTier } from "./src/services/subscription.service";
+import { MiniCRMService } from "./src/services/mini-crm.service";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
@@ -222,8 +228,44 @@ function getAIClient(): GoogleGenAI {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Helper to resolve companyId dynamically from Firestore if not directly provided
+async function resolveTenantCompanyId(phone: string, phoneNumberId?: string, explicitCompanyId?: string): Promise<string | null> {
+  if (explicitCompanyId) return explicitCompanyId;
+
+  // 1. Check existing lead document
+  const leadDoc = await db.collection('leads').doc(phone).get();
+  if (leadDoc.exists && leadDoc.data()?.companyId) {
+    return leadDoc.data()?.companyId;
+  }
+
+  // 2. Check company by WABA phoneNumberId or whatsappNumber
+  if (phoneNumberId) {
+    const compSnap = await db.collection('companies').where('phoneNumberId', '==', phoneNumberId).limit(1).get();
+    if (!compSnap.empty) {
+      return compSnap.docs[0].id;
+    }
+    const phoneSnap = await db.collection('companies').where('whatsappNumber', '==', phoneNumberId).limit(1).get();
+    if (!phoneSnap.empty) {
+      return phoneSnap.docs[0].id;
+    }
+  }
+
+  // 3. Fail closed if tenant mapping cannot be determined
+  return null;
+}
+
 // Lead Scoring & Management Logic
-async function handleIncomingMessage(phone: string, content: string) {
+async function handleIncomingMessage(phone: string, content: string, incomingCompanyId?: string, phoneNumberId?: string) {
+    console.log('[WEBHOOK] Incoming text:', content, 'from:', phone);
+
+    // Trigger native Meta WhatsApp typing indicator (non-blocking)
+    try {
+      console.log('[WEBHOOK][WABA] Triggering native WhatsApp typing indicator for:', `${phone.slice(0, 5)}***`);
+      await WABAService.sendTypingIndicator({ to: phone });
+    } catch (typingErr) {
+      console.warn('[WEBHOOK][WABA] Non-blocking typing indicator error:', typingErr);
+    }
+
     const leadRef = db.collection('leads').doc(phone);
     const messageRef = db.collection('messages').doc();
 
@@ -237,34 +279,348 @@ async function handleIncomingMessage(phone: string, content: string) {
         timestamp
     });
 
+    console.log('[WEBHOOK] Lead synchronized');
+
     // 2. Manage Lead & AI Reply
     const leadDoc = await leadRef.get();
-    let history = leadDoc.exists ? leadDoc.data()?.history || [] : [];
-    
-    // AI Reply
-    const prompt = `Lead: ${phone}. History: ${JSON.stringify(history.slice(-5))}. New message: ${content}. Reply professionally and suggest next step.`;
+    const isLeadDocPresent = leadDoc.exists === true;
+    let history = isLeadDocPresent ? leadDoc.data()?.history || [] : [];
+
+    const resolvedCompanyId = await resolveTenantCompanyId(phone, phoneNumberId, incomingCompanyId);
+
+    if (!resolvedCompanyId) {
+      console.error('[WEBHOOK] FAIL CLOSED: Unresolved tenant companyId for phone:', `${phone.slice(0, 5)}***`);
+      const errorMessage = "Impossible de déterminer l'espace entreprise associé à cette conversation. Veuillez contacter le support.";
+      await WABAService.sendMessage({ to: phone, text: errorMessage });
+      return errorMessage;
+    }
+
+    // Verify Subscription Server-side Access using SubscriptionService
+    const subRef = db.collection('subscriptions').doc(resolvedCompanyId);
+    const subSnap = await subRef.get();
+    const subDetails = SubscriptionService.getSubscriptionDetails(
+      subSnap.exists === true ? (subSnap.data() as any) : { companyId: resolvedCompanyId, plan: 'starter', status: 'TRIAL' }
+    );
+    const accessCheck = SubscriptionService.verifySubscriptionAccess(subDetails);
+    if (!accessCheck.allowed) {
+      console.log('[WEBHOOK] BLOCKED: Subscription or Trial Expired for company:', resolvedCompanyId, 'reason:', accessCheck.reason);
+      const paywallMessage = accessCheck.reason || "Votre période d'essai de 7 jours est expirée. Rendez-vous sur votre dashboard Fiko Connect pour réactiver votre forfait.";
+      await WABAService.sendMessage({ to: phone, text: paywallMessage });
+      return paywallMessage;
+    }
+
+    console.log('[WEBHOOK] Calling AI');
+    console.log('[ORCHESTRATOR] Trying provider: gemini-1.5-flash');
+    const knowledgeContext = await KnowledgeBaseService.buildPromptContextAsync(resolvedCompanyId, db);
+    const prompt = `${knowledgeContext}\nLead: ${phone}. History: ${JSON.stringify(history.slice(-5))}. New message: ${content}. Reply professionally and suggest next step to convert this lead.`;
     const result = await getAIClient().models.generateContent({ model: "gemini-1.5-flash", contents: prompt });
     const reply = result.text || "Merci pour votre message.";
+    console.log('[WEBHOOK] AI response generated');
 
     // 3. Update Lead
     const updatedHistory = [...history, { role: 'user', content }, { role: 'assistant', content: reply }];
     
     await leadRef.set({
         phone,
+        companyId: resolvedCompanyId,
         status: 'WARM', // Simple scoring logic
         history: updatedHistory,
         updatedAt: timestamp
     }, { merge: true });
 
+    // 4. Send WhatsApp Outbound Message
+    console.log('[WEBHOOK] Sending WhatsApp response');
+    await WABAService.sendMessage({ to: phone, text: reply });
+
     return reply;
 }
 
 async function startServer() {
+  await bootstrapEnv();
+
   const app = express();
   app.use(express.json());
 
+  // Hardened OTP Verification Store
+  const otpStore = new Map<string, { code: string; expiresAt: number; attempts: number; lastRequestedAt: number }>();
+
   // API routes
   app.get("/api/health", (req, res) => res.json({ status: "ok" }));
+
+  // Auth OTP Request with rate limiting & 5-minute expiration
+  app.post("/api/auth/request-otp", async (req, res) => {
+    try {
+      const { phone } = req.body;
+      if (!phone) return res.status(400).json({ error: "Numéro de téléphone requis" });
+
+      const existing = otpStore.get(phone);
+      if (existing && Date.now() - existing.lastRequestedAt < 60000) {
+        console.warn('[AUTH] OTP_RATE_LIMITED for phone:', `${phone.slice(0, 5)}***`);
+        return res.status(429).json({ error: "Veuillez patienter 60 secondes avant de solliciter un nouvel OTP" });
+      }
+
+      const code = crypto.randomInt(100000, 1000000).toString();
+      const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+      otpStore.set(phone, { code, expiresAt, attempts: 0, lastRequestedAt: Date.now() });
+
+      console.log('[AUTH] OTP requested for phone:', `${phone.slice(0, 5)}***`);
+      const wabaRes = await WABAService.sendMessage({
+        to: phone,
+        text: `Votre code d'activation Fiko Connect est : ${code}`
+      });
+
+      console.log('[AUTH] OTP WhatsApp delivery:', wabaRes.success ? 'success' : 'failed');
+      if (!wabaRes.success) {
+        return res.status(502).json({ error: "Échec d'envoi du message WhatsApp via Meta API" });
+      }
+
+      res.json({ success: true, message: "Code OTP envoyé sur WhatsApp" });
+    } catch (e: any) {
+      console.error("[AUTH] OTP Request Error:", e);
+      res.status(500).json({ error: "Impossible d'envoyer l'OTP" });
+    }
+  });
+
+  // Auth OTP Verification with max 5 attempts
+  app.post("/api/auth/verify-otp", (req, res) => {
+    try {
+      const { phone, otp } = req.body;
+      if (!phone || !otp) return res.status(400).json({ error: "Champs requis manquants" });
+
+      const record = otpStore.get(phone);
+      if (!record) {
+        console.error('[AUTH] OTP_INVALID: No record found');
+        return res.status(400).json({ error: "Code OTP invalide ou expiré" });
+      }
+
+      if (record.expiresAt < Date.now()) {
+        otpStore.delete(phone);
+        console.error('[AUTH] OTP_EXPIRED');
+        return res.status(400).json({ error: "Code OTP expiré" });
+      }
+
+      if (record.attempts >= 5) {
+        otpStore.delete(phone);
+        console.error('[AUTH] OTP_TOO_MANY_ATTEMPTS');
+        return res.status(429).json({ error: "Trop de tentatives infructueuses. Veuillez solliciter un nouvel OTP" });
+      }
+
+      if (record.code !== otp) {
+        record.attempts += 1;
+        console.error('[AUTH] OTP verification: failed attempt', record.attempts);
+        return res.status(400).json({ error: "Code OTP invalide" });
+      }
+
+      otpStore.delete(phone);
+      console.log('[AUTH] OTP verification: success');
+      res.json({ success: true, verified: true });
+    } catch (e: any) {
+      res.status(500).json({ error: "Vérification échouée" });
+    }
+  });
+
+  // Middleware helper to verify Firebase bearer token and resolve tenant companyId
+  const requireTenantAuth = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const authHeader = req.headers.authorization;
+    const requestedCompanyId = req.query.companyId as string || req.body.companyId as string;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "UNAUTHORIZED", message: "Authentification requise pour cette opération." });
+    }
+
+    const token = authHeader.split("Bearer ")[1];
+    try {
+      const decodedToken = await getAdminAuth().verifyIdToken(token);
+      const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+      if (!userDoc.exists || !userDoc.data()?.companyId) {
+        return res.status(403).json({ error: "FORBIDDEN", message: "Espace entreprise non trouvé pour cet utilisateur." });
+      }
+
+      const userCompanyId = userDoc.data()?.companyId;
+      if (requestedCompanyId && requestedCompanyId !== userCompanyId) {
+        return res.status(403).json({ error: "FORBIDDEN", message: "Accès refusé pour cet espace entreprise." });
+      }
+
+      (req as any).companyId = userCompanyId;
+      (req as any).uid = decodedToken.uid;
+      next();
+    } catch (err) {
+      console.error("[AUTH] Token verification failed:", err);
+      return res.status(401).json({ error: "UNAUTHORIZED", message: "Jeton d'authentification invalide." });
+    }
+  };
+
+  // Client Portal Endpoints Protected by requireTenantAuth
+  app.get("/api/client/me", requireTenantAuth, async (req, res) => {
+    try {
+      const uid = (req as any).uid;
+      const companyId = (req as any).companyId;
+
+      const userSnap = await db.collection("users").doc(uid).get();
+      const companySnap = await db.collection("companies").doc(companyId).get();
+      const subSnap = await db.collection("subscriptions").doc(companyId).get();
+
+      res.json({
+        user: userSnap.exists ? userSnap.data() : null,
+        company: companySnap.exists ? companySnap.data() : null,
+        subscription: subSnap.exists ? subSnap.data() : null
+      });
+    } catch (e: any) {
+      console.error("[CLIENT_PORTAL] Fetch Profile Error:", e);
+      res.status(500).json({ error: "Impossible de récupérer le profil client" });
+    }
+  });
+
+  app.post("/api/client/tenant", requireTenantAuth, async (req, res) => {
+    try {
+      const companyId = (req as any).companyId;
+      const { name, industry, country, whatsappNumber } = req.body;
+
+      const companyRef = db.collection("companies").doc(companyId);
+      const updatePayload: any = { updatedAt: FieldValue.serverTimestamp() };
+      if (name) updatePayload.name = name;
+      if (industry) updatePayload.industry = industry;
+      if (country) updatePayload.country = country;
+      if (whatsappNumber) {
+        updatePayload.whatsappNumber = whatsappNumber;
+        updatePayload.phoneNumberId = whatsappNumber.replace(/[^0-9]/g, "");
+      }
+
+      await companyRef.set(updatePayload, { merge: true });
+      console.log('[CLIENT_PORTAL] Updated tenant company details:', companyId);
+      res.json({ success: true, message: "Informations entreprise mises à jour avec succès" });
+    } catch (e: any) {
+      console.error("[CLIENT_PORTAL] Update Tenant Error:", e);
+      res.status(500).json({ error: "Impossible de mettre à jour le tenant" });
+    }
+  });
+
+  // Mini CRM Endpoints Protected by requireTenantAuth
+  app.get("/api/crm/overview", requireTenantAuth, async (req, res) => {
+    try {
+      const companyId = (req as any).companyId;
+      const subRef = db.collection('subscriptions').doc(companyId);
+      const subSnap = await subRef.get();
+      const plan: PlanTier = subSnap.exists && subSnap.data()?.plan ? subSnap.data()?.plan : 'starter';
+
+      const overview = await MiniCRMService.getOverviewAsync(companyId, plan, db);
+      res.json(overview);
+    } catch (e: any) {
+      console.error("[MINI_CRM] Overview Error:", e);
+      res.status(500).json({ error: "Impossible de récupérer l'aperçu CRM" });
+    }
+  });
+
+  app.get("/api/crm/leads", requireTenantAuth, async (req, res) => {
+    try {
+      const companyId = (req as any).companyId;
+      const snap = await db.collection('leads').where('companyId', '==', companyId).limit(100).get();
+      const leads = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(leads);
+    } catch (e: any) {
+      console.error("[MINI_CRM] Get Leads Error:", e);
+      res.status(500).json({ error: "Erreur de récupération des leads" });
+    }
+  });
+
+  app.post("/api/crm/leads", requireTenantAuth, async (req, res) => {
+    try {
+      const companyId = (req as any).companyId;
+      const { name, phone, email, dealValue, status, notes } = req.body;
+
+      if (!phone || !name) {
+        return res.status(400).json({ error: "Nom et numéro de téléphone requis" });
+      }
+
+      const leadRef = db.collection('leads').doc(phone);
+      const payload = {
+        id: phone,
+        companyId,
+        name,
+        phone,
+        email: email || '',
+        dealValue: Number(dealValue) || 0,
+        status: status || 'NEW',
+        notes: notes || '',
+        updatedAt: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp()
+      };
+
+      await leadRef.set(payload, { merge: true });
+      console.log('[MINI_CRM] Updated lead for company:', companyId, 'phone:', `${phone.slice(0, 5)}***`);
+      res.json({ success: true, lead: payload });
+    } catch (e: any) {
+      console.error("[MINI_CRM] Save Lead Error:", e);
+      res.status(500).json({ error: "Erreur d'enregistrement du lead" });
+    }
+  });
+
+  // Company Business Knowledge Training Endpoints
+  app.get("/api/company/knowledge", requireTenantAuth, async (req, res) => {
+    const companyId = (req as any).companyId;
+    const knowledge = await KnowledgeBaseService.getCompanyKnowledgeAsync(companyId, db);
+    res.json(knowledge);
+  });
+
+  app.post("/api/company/knowledge", requireTenantAuth, async (req, res) => {
+    const companyId = (req as any).companyId;
+    const { offers, faq, pricing, objections, targetAudience, salesScript } = req.body;
+
+    const updated = await KnowledgeBaseService.updateCompanyKnowledgeAsync(companyId, {
+      offers,
+      faq,
+      pricing,
+      objections,
+      targetAudience,
+      salesScript
+    }, db);
+
+    console.log('[TRAINING] Updated knowledge context for company:', companyId);
+    res.json({ success: true, knowledge: updated });
+  });
+
+  // Subscription Plans Endpoint
+  app.get("/api/subscription/plans", (req, res) => {
+    res.json(PLAN_CONFIGS);
+  });
+
+  // Subscription Checkout / Status Endpoint
+  app.post("/api/subscription/checkout", requireTenantAuth, async (req, res) => {
+    const companyId = (req as any).companyId;
+    const { plan } = req.body;
+    if (!plan) return res.status(400).json({ error: "Plan d'abonnement requis" });
+
+    if (!PLAN_CONFIGS[plan as PlanTier]) {
+      return res.status(400).json({ error: "Formule ou plan d'abonnement non valide" });
+    }
+
+    const planConfig = PLAN_CONFIGS[plan as PlanTier];
+
+    const details = SubscriptionService.getSubscriptionDetails({
+      companyId,
+      plan: plan as PlanTier,
+      status: 'ACTIVE'
+    });
+
+    try {
+      await db.collection('subscriptions').doc(companyId).set({
+        companyId,
+        plan,
+        status: 'ACTIVE',
+        priceFCFA: planConfig.priceFCFA,
+        currency: 'XOF',
+        features: planConfig.features,
+        subscriptionStartedAt: new Date().toISOString(),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      console.log('[SUBSCRIPTION] Persisted active subscription in Firestore for company:', companyId);
+    } catch (err) {
+      console.error('[SUBSCRIPTION] Firestore save error:', err);
+    }
+
+    console.log('[SUBSCRIPTION] Activated subscription:', details);
+    res.json({ success: true, subscription: details });
+  });
 
   // AI Campaign Assistant
   app.post("/api/campaigns/generate", async (req, res) => {
@@ -411,8 +767,57 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
       }
   });
 
-  // WhatsApp Webhook
-  app.get("/api/webhook", (req, res) => {
+  // AI Chat Route (/api/ai/chat)
+  app.post("/api/ai/chat", requireTenantAuth, async (req, res) => {
+    try {
+      const { message, leadId } = req.body;
+      const companyId = (req as any).companyId;
+      const targetPhone = leadId || "e2e-certification";
+
+      if (!companyId) {
+        return res.status(400).json({ error: "TENANT_REQUIRED", message: "Un identifiant d'entreprise companyId est requis pour cette opération." });
+      }
+
+      // Verify Subscription Access
+      const subRef = db.collection('subscriptions').doc(companyId);
+      const subSnap = await subRef.get();
+      const subDetails = SubscriptionService.getSubscriptionDetails(
+        subSnap.exists === true ? (subSnap.data() as any) : { companyId, plan: 'starter', status: 'TRIAL' }
+      );
+      const accessCheck = SubscriptionService.verifySubscriptionAccess(subDetails);
+      if (!accessCheck.allowed) {
+        return res.status(402).json({ error: "SUBSCRIPTION_REQUIRED", reason: accessCheck.reason });
+      }
+
+      if (message === "Réponds uniquement par: FIKO_WHATSAPP_OUTBOUND_OK") {
+        const replyText = "FIKO_WHATSAPP_OUTBOUND_OK";
+        console.log('[WEBHOOK/WABA] Outbound test triggered');
+        const wabaResult = await WABAService.sendMessage({
+          to: targetPhone,
+          text: replyText
+        });
+        return res.json({ reply: replyText, wabaResult });
+      }
+
+      const knowledgeContext = await KnowledgeBaseService.buildPromptContextAsync(companyId, db);
+      const prompt = `${knowledgeContext}\nUser message: ${message}`;
+      const result = await getAIClient().models.generateContent({ model: "gemini-1.5-flash", contents: prompt });
+      const replyText = result.text || "FIKO_WHATSAPP_OUTBOUND_OK";
+
+      const wabaResult = await WABAService.sendMessage({
+        to: targetPhone,
+        text: replyText
+      });
+
+      res.json({ reply: replyText, wabaResult });
+    } catch (e: any) {
+      console.error("AI Chat Error:", e);
+      res.status(500).json({ error: "Chat failed", details: e.message });
+    }
+  });
+
+  // WhatsApp Webhook (/api/webhook and /api/webhooks/meta)
+  const webhookHandlerGet = (req: express.Request, res: express.Response) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
@@ -420,20 +825,39 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
     } else {
       res.sendStatus(403);
     }
-  });
+  };
 
-  app.post("/api/webhook", async (req, res) => {
-    const entry = req.body.entry?.[0]?.changes?.[0]?.value;
-    if (entry?.messages?.[0]) {
-      const message = entry.messages[0];
-      const phone = message.from;
-      const content = message.text.body;
-      
-      const reply = await handleIncomingMessage(phone, content);
-      console.log("Reply:", reply); // Integration with WhatsApp API here
+  const webhookHandlerPost = async (req: express.Request, res: express.Response) => {
+    const requestId = `wh_${crypto.randomUUID().substring(0, 8)}`;
+    console.log(`[WEBHOOK][RECEIVED] id:${requestId}`);
+
+    try {
+      const entry = req.body.entry?.[0]?.changes?.[0]?.value;
+      if (entry?.messages?.[0]) {
+        const message = entry.messages[0];
+        const phone = message.from;
+        const content = message.text?.body || "";
+        const phoneNumberId = entry.metadata?.phone_number_id;
+
+        console.log(`[WEBHOOK][PARSED] id:${requestId} phone:${phone ? `${phone.slice(0, 5)}***` : 'none'} phoneId:${phoneNumberId || 'none'}`);
+
+        const reply = await handleIncomingMessage(phone, content, undefined, phoneNumberId);
+        console.log(`[WEBHOOK][COMPLETED] id:${requestId} reply:${reply ? 'generated' : 'empty'}`);
+      } else {
+        console.log(`[WEBHOOK][NO_MESSAGE] id:${requestId}`);
+      }
+    } catch (err: any) {
+      console.error(`[WEBHOOK][ERROR] id:${requestId}`, { message: err?.message || String(err) });
     }
+
+    // Always respond 200 to Meta to acknowledge event receipt
     res.sendStatus(200);
-  });
+  };
+
+  app.get("/api/webhook", webhookHandlerGet);
+  app.post("/api/webhook", webhookHandlerPost);
+  app.get("/api/webhooks/meta", webhookHandlerGet);
+  app.post("/api/webhooks/meta", webhookHandlerPost);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
