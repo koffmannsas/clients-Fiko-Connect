@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { initializeApp, applicationDefault, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { bootstrapEnv } from './src/env-init';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { GoogleGenAI } from "@google/genai";
 
@@ -260,6 +261,9 @@ async function handleIncomingMessage(phone: string, content: string) {
 }
 
 async function startServer() {
+  // Load securely stored secrets from GCP Secret Manager first
+  await bootstrapEnv();
+
   const app = express();
   app.use(express.json());
 
@@ -449,7 +453,8 @@ Retourne uniquement le texte du nouveau message, sans introduction ni format JSO
     });
   }
 
-  app.listen(3000, "0.0.0.0", () => console.log(`Server running on http://localhost:3000`));
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  app.listen(port, "0.0.0.0", () => console.log(`Server running on http://localhost:${port}`));
 }
 
 startServer();
