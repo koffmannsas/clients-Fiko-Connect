@@ -94,39 +94,31 @@ export const LoginPage = ({ onToggle, onLogin }: { onToggle: () => void, onLogin
 
     try {
       const emailLower = identifier.trim().toLowerCase();
-      // Check for Meta Review bypass
-      if (emailLower === 'review@krypton-ia.tech' && password === 'MetaReview2026!') {
-        try {
-          const { signInWithEmailAndPassword } = await import('firebase/auth');
-          const { auth } = await import('../lib/firebase');
-          await signInWithEmailAndPassword(auth, emailLower, password);
-          console.log("Firebase Auth signed in for Meta Review Team.");
-        } catch (authErr) {
-          console.warn("Firebase Auth client bypass active (running offline / sandbox context):", authErr);
-        }
-
-        // Return Elite pre-configured meta reviewer session
-        onLogin({
-          companyName: 'Meta Review Environment',
-          businessType: 'technology',
-          businessCategory: 'SaaS Platform Review',
-          workingHours: '24/7',
-          mobileMoneyProvider: 'Wave',
-          mobileMoneyNumber: '+225 07 48 93 11 20',
-          selectedPlan: 'elite',
-          reviewMode: true,
-          connectedNumber: '+225 05 92 84 77 15'
-        });
-        return;
+      if (emailLower.includes('@')) {
+        const { signInWithEmailAndPassword } = await import('firebase/auth');
+        const { auth } = await import('../lib/firebase');
+        await signInWithEmailAndPassword(auth, emailLower, password);
       }
-
-      // Normal phone or other email logic
       onLogin();
     } catch (err: any) {
       setError(err.message || "Identifiants incorrects.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDemoAccess = () => {
+    onLogin({
+      companyName: 'Espace Démo (Bac à sable)',
+      businessType: 'services',
+      businessCategory: 'Commerce & Services',
+      workingHours: '24/7',
+      mobileMoneyProvider: 'Wave',
+      mobileMoneyNumber: '+225 07 48 93 11 20',
+      selectedPlan: 'starter',
+      reviewMode: true,
+      connectedNumber: '+225 05 92 84 77 15'
+    });
   };
 
   return (
@@ -143,7 +135,7 @@ export const LoginPage = ({ onToggle, onLogin }: { onToggle: () => void, onLogin
         <form onSubmit={handleLoginSubmit} className="space-y-4">
           <InputField 
             label="Numéro de téléphone ou Email" 
-            placeholder="review@krypton-ia.tech ou +225..." 
+            placeholder="votre-email@exemple.ci ou +225..." 
             value={identifier}
             onChange={(e: any) => setIdentifier(e.target.value)}
           />
@@ -158,13 +150,10 @@ export const LoginPage = ({ onToggle, onLogin }: { onToggle: () => void, onLogin
           <div className="flex justify-between items-center text-xs mb-4">
             <button 
               type="button" 
-              onClick={() => {
-                setIdentifier('review@krypton-ia.tech');
-                setPassword('MetaReview2026!');
-              }}
-              className="text-[#25D366] hover:text-emerald-400 font-extrabold underline cursor-pointer hover:no-underline flex items-center gap-1"
+              onClick={handleDemoAccess}
+              className="text-amber-400 hover:text-amber-300 font-extrabold underline cursor-pointer hover:no-underline flex items-center gap-1"
             >
-              ⚡ Remplir Compte Revue Meta
+              ⚡ Accès Démo Sandbox
             </button>
             <span className="text-fiko-red cursor-pointer hover:underline">Mot de passe oublié ?</span>
           </div>

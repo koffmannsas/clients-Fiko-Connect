@@ -292,8 +292,15 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
     } else {
       // Authenticated session exists -> Verify dashboard route
       setLoading(true);
-      await checkUserCompanyAndEnter(currentUser.uid);
-      setLoading(false);
+      try {
+        await checkUserCompanyAndEnter(currentUser.uid);
+      } catch (err: any) {
+        console.warn("Could not check user company in Firestore, falling back to onboarding:", err);
+        setOnboardActive(true);
+        setOnboardStep(1);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -425,10 +432,11 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
 
     setLoading(true);
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+      const emailLower = email.trim().toLowerCase();
+      const userCredential = await signInWithEmailAndPassword(auth, emailLower, password);
       await checkUserCompanyAndEnter(userCredential.user.uid);
     } catch (err: any) {
-      setErrorMessage(err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' 
+      setErrorMessage(err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential'
         ? "Identifiants ou mot de passe incorrects."
         : err.message || "Impossible de se connecter.");
     } finally {
@@ -436,9 +444,22 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
     }
   };
 
-  const fillReviewCredentials = () => {
-    setEmail('review@krypton-ia.tech');
-    setPassword('MetaReview2026!');
+  const enterDemoSandbox = () => {
+    setIdentityOpen(false);
+    onEnter({
+      companyName: 'Espace Démo (Bac à sable)',
+      businessType: 'services',
+      businessCategory: 'Commerce & Services',
+      workingHours: '24/7',
+      mobileMoneyProvider: 'Wave',
+      mobileMoneyNumber: '+225 07 48 93 11 20',
+      selectedPlan: 'starter',
+      reviewMode: true,
+      connectedNumber: '+225 05 92 84 77 15',
+      contactsCaptured: 4,
+      conversationsProcessed: 42,
+      estimatedRevenue: 180000,
+    }, true);
   };
 
   // --- RENDER ACTIVATION EXPERIENCE ---
@@ -1409,14 +1430,14 @@ export default function QuantumGate({ onEnter }: QuantumGateProps) {
                   />
                 </div>
 
-                {/* AutoFill link */}
+                {/* Demo sandbox link */}
                 <div className="flex justify-between items-center text-xs py-1">
                   <button 
                     type="button" 
-                    onClick={fillReviewCredentials}
-                    className="text-[#25D366] hover:text-emerald-400 font-extrabold underline cursor-pointer hover:no-underline flex items-center gap-1"
+                    onClick={enterDemoSandbox}
+                    className="text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer hover:no-underline flex items-center gap-1"
                   >
-                    ⚡ Compte de Revue Meta
+                    ⚡ Accès Démo (Bac à sable sans compte)
                   </button>
                 </div>
 

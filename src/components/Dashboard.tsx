@@ -1,5 +1,7 @@
 import React, { useState, useEffect, FormEvent } from 'react';
 import SaaSGrowthEngine from './SaaSGrowthEngine';
+import { auth, db } from '../lib/firebase';
+import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { 
   AlertTriangle, 
   Target, 
@@ -279,6 +281,59 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
   useEffect(() => {
     const interval = setInterval(() => setPulse(p => !p), 1200);
     return () => clearInterval(interval);
+  }, []);
+
+  // Sync real-time ledger & leads from Firestore for authenticated company
+  useEffect(() => {
+    let unsubTx: (() => void) | undefined;
+    let unsubLeads: (() => void) | undefined;
+
+    const setupDashboardRealData = async () => {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      try {
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        const companyId = userDoc.exists() ? userDoc.data()?.companyId : null;
+        if (!companyId) return;
+
+        // Transactions listener
+        const qTx = query(collection(db, 'transactions'), where('companyId', '==', companyId));
+        unsubTx = onSnapshot(qTx, (snapshot) => {
+          let sum = 0;
+          let count = 0;
+          snapshot.forEach((snap) => {
+            const data = snap.data();
+            if (data.status === 'SUCCESS') {
+              sum += Number(data.amount) || 0;
+              count += 1;
+            }
+          });
+          // Only update if there is at least one transaction recorded for the company
+          if (snapshot.size > 0) {
+            setRevenueToday(sum);
+            setPaymentsToday(count);
+          }
+        }, (err) => console.warn("Dashboard transactions sync suppressed:", err));
+
+        // Leads listener
+        const qLeads = query(collection(db, 'leads'), where('companyId', '==', companyId));
+        unsubLeads = onSnapshot(qLeads, (snapshot) => {
+          if (snapshot.size > 0) {
+            setLeadsToday(snapshot.size);
+          }
+        }, (err) => console.warn("Dashboard leads sync suppressed:", err));
+      } catch (err) {
+        console.warn("Could not sync dashboard metrics with Firestore:", err);
+      }
+    };
+
+    setupDashboardRealData();
+
+    return () => {
+      if (unsubTx) unsubTx();
+      if (unsubLeads) unsubLeads();
+    };
   }, []);
 
   // SIMULATE: Fiko Revenue AI Follow-ups

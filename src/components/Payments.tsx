@@ -1,242 +1,530 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   CreditCard, 
-  Coins, 
   TrendingUp, 
-  ArrowUpRight, 
   CheckCircle, 
   XCircle, 
-  Download, 
-  Settings, 
+  Clock,
+  ShieldCheck, 
   Smartphone,
-  ShieldCheck,
-  Building,
   RefreshCw,
-  Wallet
+  Wallet,
+  ExternalLink,
+  Filter,
+  AlertCircle
 } from 'lucide-react';
-
-interface Transaction {
-  reference: string;
-  name: string;
-  phone: string;
-  amount: number;
-  provider: 'Wave' | 'Orange Money' | 'MTN Money' | 'Wari';
-  timestamp: string;
-  status: 'SUCCESS' | 'PENDING' | 'FAILED';
-  fees: number;
-}
+import { auth, db } from '../lib/firebase';
+import { collection, query, where, onSnapshot, orderBy, doc, getDoc } from 'firebase/firestore';
+import { apiVerifyPaystackPayment, apiGetPaystackStatus } from '../lib/api';
+import { PaymentTransactionRecord } from '../types';
 
 export default function PaymentsModule() {
-  const [copiedKey, setCopiedKey] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<'all' | 'Wave' | 'Orange Money' | 'MTN Money'>('all');
+  const [transactions, setTransactions] = useState<PaymentTransactionRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [verifyingRef, setVerifyingRef] = useState<string | null>(null);
+  const [verifyMessage, setVerifyMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [modeFilter, setModeFilter] = useState<'all' | 'live' | 'test'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'SUCCESS' | 'PENDING' | 'FAILED'>('all');
+  const [paystackConfig, setPaystackConfig] = useState<{
+    configured: boolean;
+    mode: 'live' | 'test';
+    publicKey: string;
+    currency: string;
+  } | null>(null);
 
-  const [transactions, setTransactions] = useState<Transaction[]>([
-    { reference: 'TX-CIV-9284', name: 'Marie Koné', phone: '+225 07 48 93 11 20', amount: 45000, provider: 'Wave', timestamp: 'Aujourd\'hui, 12:05', status: 'SUCCESS', fees: 450 },
-    { reference: 'TX-CIV-9121', name: 'Koffi Yao', phone: '+225 05 92 84 77 15', amount: 24900, provider: 'Orange Money', timestamp: 'Aujourd\'hui, 11:46', status: 'SUCCESS', fees: 249 },
-    { reference: 'TX-CIV-8840', name: 'Zadi Simplice', phone: '+225 05 60 70 80 90', amount: 49900, provider: 'Wave', timestamp: 'Hier, 18:22', status: 'SUCCESS', fees: 499 },
-    { reference: 'TX-CIV-8812', name: 'Awa Diallo', phone: '+225 01 02 03 04 05', amount: 19900, provider: 'MTN Money', timestamp: 'Hier, 09:12', status: 'SUCCESS', fees: 199 },
-    { reference: 'TX-CIV-7100', name: 'Christian Gnamien', phone: '+225 07 11 22 33 44', amount: 99000, provider: 'Orange Money', timestamp: 'Il y a 2 jours', status: 'SUCCESS', fees: 990 },
-    { reference: 'TX-CIV-6240', name: 'Aicha Touré', phone: '+225 01 44 55 66 77', amount: 19900, provider: 'Wave', timestamp: 'Il y a 3 jours', status: 'FAILED', fees: 0 }
-  ]);
+  // Load Paystack backend config status
+  useEffect(() => {
+    let isMounted = true;
+    apiGetPaystackStatus()
+      .then(res => {
+        if (isMounted) setPaystackConfig(res);
+      })
+      .catch(err => {
+        console.warn("Could not load Paystack status:", err);
+      });
+    return () => { isMounted = false; };
+  }, []);
 
-  // Calculations
-  const successfulTx = transactions.filter(t => t.status === 'SUCCESS');
-  const filteredTx = selectedProvider === 'all' 
-    ? transactions 
-    : transactions.filter(t => t.provider === selectedProvider);
+  // Listen to Firestore transactions for this user's company
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
 
-  const totalRevenue = successfulTx.reduce((sum, t) => sum + t.amount, 0);
-  const totalFees = successfulTx.reduce((sum, t) => sum + t.fees, 0);
-  const liveNetBalance = totalRevenue - totalFees;
+    const setupListener = async () => {
+      const user = auth.currentUser;
+      if (!user) {
+        // Fallback demo transactions
+        setTransactions([
+          {
+            id: 'tx_demo_01',
+            reference: 'FIKO_DEMO_WAVE_01',
+            paystackReference: 'PSTK_CIV_DEMO_01',
+            companyId: 'sandbox_demo_reviewer_68',
+            amount: 45000,
+            currency: 'XOF',
+            customerName: 'Marie Koné (Démo)',
+            customerEmail: 'marie.kone@example.com',
+            channel: 'Wave (via Paystack)',
+            status: 'SUCCESS',
+            mode: 'test',
+            createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+            paidAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+          },
+          {
+            id: 'tx_demo_02',
+            reference: 'FIKO_DEMO_OM_02',
+            paystackReference: 'PSTK_CIV_DEMO_02',
+            companyId: 'sandbox_demo_reviewer_68',
+            amount: 24900,
+            currency: 'XOF',
+            customerName: 'Koffi Yao (Démo)',
+            customerEmail: 'koffi.yao@example.com',
+            channel: 'Orange Money (via Paystack)',
+            status: 'SUCCESS',
+            mode: 'test',
+            createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
+            paidAt: new Date(Date.now() - 3600000 * 5).toISOString(),
+          }
+        ]);
+        setLoading(false);
+        return;
+      }
 
-  const copyApiKey = () => {
-    setCopiedKey(true);
-    navigator.clipboard.writeText('fk_live_2026_koffmann_93710_wave_orange');
-    setTimeout(() => setCopiedKey(false), 2000);
+      try {
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        const companyId = userDoc.exists() ? userDoc.data()?.companyId : null;
+
+        if (!companyId) {
+          setLoading(false);
+          return;
+        }
+
+        const q = query(
+          collection(db, 'transactions'),
+          where('companyId', '==', companyId),
+          orderBy('createdAt', 'desc')
+        );
+
+        unsubscribe = onSnapshot(
+          q,
+          (snapshot) => {
+            const list: PaymentTransactionRecord[] = [];
+            snapshot.forEach((docSnap) => {
+              const data = docSnap.data();
+              list.push({
+                id: docSnap.id,
+                reference: data.reference || docSnap.id,
+                paystackReference: data.paystackReference,
+                companyId: data.companyId,
+                leadId: data.leadId,
+                amount: data.amount || 0,
+                currency: data.currency || 'XOF',
+                customerName: data.customerName || 'Client',
+                customerEmail: data.customerEmail || '',
+                channel: data.channel || 'Paystack',
+                status: data.status || 'PENDING',
+                mode: data.mode || (data.reference?.includes('_TEST_') ? 'test' : 'live'),
+                checkoutUrl: data.checkoutUrl,
+                createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt || new Date().toISOString(),
+                paidAt: data.paidAt?.toDate ? data.paidAt.toDate().toISOString() : data.paidAt,
+                gatewayResponse: data.gatewayResponse,
+              });
+            });
+            setTransactions(list);
+            setLoading(false);
+          },
+          (err) => {
+            console.warn("Firestore transactions snapshot error (using empty/fallback):", err);
+            setLoading(false);
+          }
+        );
+      } catch (err) {
+        console.warn("Error setting up transactions listener:", err);
+        setLoading(false);
+      }
+    };
+
+    setupListener();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
+  const handleManualVerify = async (reference: string) => {
+    setVerifyingRef(reference);
+    setVerifyMessage(null);
+    try {
+      const res = await apiVerifyPaystackPayment(reference);
+      if (res.status === 'SUCCESS') {
+        setVerifyMessage({
+          text: `Paiement vérifié avec succès auprès de Paystack ! Montant : ${res.amount.toLocaleString()} ${res.currency}.`,
+          type: 'success'
+        });
+      } else if (res.status === 'PENDING') {
+        setVerifyMessage({
+          text: `Transaction toujours en attente de validation client sur Paystack (${res.reference}).`,
+          type: 'info'
+        });
+      } else {
+        setVerifyMessage({
+          text: `Statut retourné par Paystack : ${res.status}. ${res.gatewayResponse || ''}`,
+          type: 'error'
+        });
+      }
+    } catch (err: any) {
+      setVerifyMessage({
+        text: err.message || "Erreur lors de la vérification sur Paystack.",
+        type: 'error'
+      });
+    } finally {
+      setVerifyingRef(null);
+    }
   };
 
+  // Calculations with strict Live vs Test separation
+  const liveSuccessful = transactions.filter(t => t.status === 'SUCCESS' && t.mode === 'live');
+  const testSuccessful = transactions.filter(t => t.status === 'SUCCESS' && t.mode === 'test');
+  const pendingTransactions = transactions.filter(t => t.status === 'PENDING');
+
+  const liveRevenue = liveSuccessful.reduce((sum, t) => sum + t.amount, 0);
+  const testRevenue = testSuccessful.reduce((sum, t) => sum + t.amount, 0);
+
+  // Filtered view
+  const filteredTransactions = transactions.filter(t => {
+    if (modeFilter === 'live' && t.mode !== 'live') return false;
+    if (modeFilter === 'test' && t.mode !== 'test') return false;
+    if (statusFilter !== 'all' && t.status !== statusFilter) return false;
+    return true;
+  });
+
   return (
-    <div className="space-y-6 animate-in fade-in duration-700">
+    <div className="space-y-6 animate-in fade-in duration-700 pb-12">
       
-      {/* PAY EXECUTIVE COUNTERS */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* GATEWAY MODE BANNER */}
+      <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
+        paystackConfig?.mode === 'live' 
+          ? 'bg-emerald-950/20 border-emerald-900/50 text-emerald-300' 
+          : 'bg-amber-950/20 border-amber-900/50 text-amber-300'
+      }`}>
+        <div className="flex items-center gap-3">
+          <div className={`w-3 h-3 rounded-full animate-ping ${paystackConfig?.mode === 'live' ? 'bg-emerald-400' : 'bg-amber-400'}`}></div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-black text-xs uppercase tracking-wider font-mono">
+                {paystackConfig?.mode === 'live' ? '● PASSERELLE PAYSTACK PRODUCTION (LIVE)' : '● PASSERELLE PAYSTACK TEST SANDBOX'}
+              </span>
+              <span className="text-[10px] bg-black/60 px-2 py-0.5 rounded border border-white/10 uppercase font-mono font-bold">
+                Devise : {paystackConfig?.currency || 'XOF'}
+              </span>
+            </div>
+            <p className="text-xs text-zinc-400 mt-0.5">
+              Encaissements unifiés : Wave, Orange Money, MTN MoMo et Cartes bancaires avec conversion automatique en sous-unités Paystack (centimes).
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[10px] text-zinc-400 font-mono">Isolation stricte :</span>
+          <span className="text-[10px] font-black uppercase px-2 py-1 rounded bg-black/80 border border-white/10 text-white font-mono">
+            Ledger Justifié ✓
+          </span>
+        </div>
+      </div>
+
+      {/* VERIFICATION FEEDBACK BANNER */}
+      {verifyMessage && (
+        <div className={`p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 ${
+          verifyMessage.type === 'success' 
+            ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
+            : verifyMessage.type === 'info'
+            ? 'bg-blue-950/40 border-blue-800 text-blue-300'
+            : 'bg-red-950/40 border-red-800 text-red-300'
+        }`}>
+          <span>{verifyMessage.text}</span>
+          <button onClick={() => setVerifyMessage(null)} className="text-zinc-400 hover:text-white font-bold px-2 py-0.5">×</button>
+        </div>
+      )}
+
+      {/* METRICS COUNTERS */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         
-        {/* Wallet Balance widget in FCFA */}
-        <div className="bg-[#060a0b] border border-emerald-950/60 p-6 rounded-2xl relative overflow-hidden group">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
+        {/* Live Confirmed Revenue */}
+        <div className="bg-[#060a0b] border border-emerald-950/60 p-5 rounded-2xl relative overflow-hidden">
           <div className="flex justify-between items-center mb-1">
             <span className="text-[10px] text-emerald-400 font-extrabold uppercase tracking-widest flex items-center gap-1">
-              <Wallet size={12} /> Solde Mobile Money Net (CIV)
+              <Wallet size={12} /> CA Paystack Réel (Live)
             </span>
-            <span className="bg-emerald-950 border border-green-900/60 text-[#25D366] text-[8px] font-black uppercase px-2 py-0.5 rounded">
-              Liquidité Réseau
+            <span className="bg-emerald-950 border border-emerald-800 text-[#25D366] text-[8px] font-black uppercase px-2 py-0.5 rounded font-mono">
+              Vérifié
             </span>
           </div>
-          <p className="text-3xl font-black text-white font-mono">{liveNetBalance.toLocaleString()} FCFA</p>
-          <div className="flex justify-between items-center text-[10px] text-gray-500 mt-4 pt-4 border-t border-gray-900">
-            <span>Commission Fiko Pay : <strong className="text-white font-mono">1% Fixe</strong></span>
-            <span className="text-[#25D366] font-bold flex items-center gap-1">
-              ● API Wave & Orange Connectée
-            </span>
+          <p className="text-2xl font-black text-white font-mono">{liveRevenue.toLocaleString()} FCFA</p>
+          <div className="text-[10px] text-zinc-500 mt-3 pt-3 border-t border-zinc-900 flex justify-between">
+            <span>Transactions Live : <strong className="text-white font-mono">{liveSuccessful.length}</strong></span>
+            <span className="text-[#25D366] font-bold">100% encaissé</span>
           </div>
         </div>
 
-        {/* Total Revenues Collected */}
-        <div className="bg-[#0a0a0a] border border-gray-900 p-6 rounded-2xl relative">
-          <span className="text-[10px] text-gray-500 font-extrabold uppercase block mb-1">Encaissements Totaux</span>
-          <p className="text-2xl font-black text-white font-mono">{totalRevenue.toLocaleString()} FCFA</p>
-          <p className="text-[10px] text-green-400 font-semibold mt-3 flex items-center gap-1">
-            <TrendingUp size={12}/> +14% par rapport à la semaine dernière
+        {/* Test Revenue */}
+        <div className="bg-[#0a0a0a] border border-amber-950/40 p-5 rounded-2xl relative">
+          <div className="flex justify-between items-center mb-1">
+            <span className="text-[10px] text-amber-400 font-extrabold uppercase tracking-widest flex items-center gap-1">
+              <CreditCard size={12} /> Volume Test Sandbox
+            </span>
+            <span className="bg-amber-950 border border-amber-800 text-amber-300 text-[8px] font-black uppercase px-2 py-0.5 rounded font-mono">
+              Test
+            </span>
+          </div>
+          <p className="text-2xl font-black text-amber-200 font-mono">{testRevenue.toLocaleString()} FCFA</p>
+          <div className="text-[10px] text-zinc-500 mt-3 pt-3 border-t border-zinc-900">
+            <span>Transactions Test : <strong className="text-amber-300 font-mono">{testSuccessful.length}</strong> (isolées du CA réel)</span>
+          </div>
+        </div>
+
+        {/* Pending Transactions */}
+        <div className="bg-[#0a0a0a] border border-zinc-900 p-5 rounded-2xl relative">
+          <span className="text-[10px] text-zinc-500 font-extrabold uppercase block mb-1">En Attente de Paiement</span>
+          <p className="text-2xl font-black text-white font-mono">{pendingTransactions.length}</p>
+          <p className="text-[10px] text-amber-400 mt-3 flex items-center gap-1">
+            <Clock size={12} /> Liens envoyés non encore clôturés
           </p>
         </div>
 
-        {/* Total Transaction Fees */}
-        <div className="bg-[#0a0a0a] border border-gray-900 p-6 rounded-2xl relative">
-          <span className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Frais de Réseau Réduits</span>
-          <p className="text-2xl font-black text-white font-mono">{totalFees.toLocaleString()} FCFA</p>
-          <p className="text-[10px] text-gray-400 mt-3">
-            Économie de ~18 500 FCFA vs passerelles traditionnelles
+        {/* Global Conversion Rate */}
+        <div className="bg-[#0a0a0a] border border-zinc-900 p-5 rounded-2xl relative">
+          <span className="text-[10px] text-zinc-500 font-extrabold uppercase block mb-1">Taux Clôture Paystack</span>
+          <p className="text-2xl font-black text-white font-mono">
+            {transactions.length > 0 
+              ? `${Math.round(((liveSuccessful.length + testSuccessful.length) / transactions.length) * 100)}%` 
+              : '0%'}
+          </p>
+          <p className="text-[10px] text-emerald-400 mt-3 flex items-center gap-1">
+            <TrendingUp size={12} /> Sur l'ensemble des liens émis
           </p>
         </div>
       </div>
 
-      {/* QUICK DISBURSEMENT ACTION CARD */}
-      <div className="bg-gradient-to-r from-emerald-950/20 via-black to-neutral-900/10 border border-emerald-900/30 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
-        <div>
-          <h4 className="font-bold text-base text-gray-200">Reverser vers votre compte bancaire ou Mobile Money perso</h4>
-          <p className="text-xs text-gray-450 mt-0.5">Le virement sera validé de bout en bout en moins de 15 minutes.</p>
-        </div>
-        <button 
-          onClick={() => alert(`Reversement de ${liveNetBalance.toLocaleString()} FCFA initié vers ${transactions[0].phone} !`)}
-          className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold px-6 py-3 rounded-xl text-xs transition active:scale-95 text-center shrink-0 w-full md:w-auto"
-        >
-          Déclencher le reversement instantané ➡️
-        </button>
-      </div>
-
-      {/* MID PANEL: TRANS LOG + PARAM INTEGRATION */}
+      {/* MAIN SECTION: LEDGER & INTEGRATION */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* TRANSMISSION LOG TABLE - LEFT/CENTER (2 COLUMNS) */}
-        <div className="col-span-1 lg:col-span-2 bg-[#0a0a0a] border border-gray-850 rounded-2xl overflow-hidden">
-          <div className="p-5 border-b border-gray-900 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        {/* LEDGER TABLE (2 COLS) */}
+        <div className="col-span-1 lg:col-span-2 bg-[#0a0a0a] border border-zinc-850 rounded-2xl overflow-hidden shadow-xl">
+          <div className="p-5 border-b border-zinc-900 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <div>
-              <h3 className="font-extrabold text-sm text-white uppercase tracking-wider">Journaux des Transactions Fiko Pay</h3>
-              <p className="text-gray-550 text-xs">Historique des pushs de paiement Wave et Orange Money de vos clients</p>
+              <h3 className="font-extrabold text-sm text-white uppercase tracking-wider flex items-center gap-2">
+                <ShieldCheck size={16} className="text-[#E10600]" /> Grand Livre des Transactions Paystack
+              </h3>
+              <p className="text-zinc-500 text-xs mt-0.5">
+                Historique auditable justifié par signature de webhook et vérification d'API
+              </p>
             </div>
             
-            {/* Filter buttons */}
-            <div className="bg-black p-1 rounded-xl border border-gray-900 flex gap-1">
-              {['all', 'Wave', 'Orange Money', 'MTN Money'].map((prov) => (
-                <button 
-                  key={prov}
-                  onClick={() => setSelectedProvider(prov as any)}
-                  className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase transition ${
-                    selectedProvider === prov ? 'bg-[#E10600] text-white' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  {prov === 'all' ? 'Tous' : prov.replace(' Money', '')}
-                </button>
-              ))}
+            {/* Filter controls */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Mode filter */}
+              <div className="bg-black p-1 rounded-xl border border-zinc-900 flex gap-1">
+                {(['all', 'live', 'test'] as const).map((m) => (
+                  <button 
+                    key={m}
+                    onClick={() => setModeFilter(m)}
+                    className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase transition ${
+                      modeFilter === m ? 'bg-[#E10600] text-white' : 'text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    {m === 'all' ? 'Tous' : m}
+                  </button>
+                ))}
+              </div>
+
+              {/* Status filter */}
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as any)}
+                className="bg-black border border-zinc-900 text-zinc-300 text-[10px] font-bold rounded-xl px-2.5 py-1.5 focus:outline-none"
+              >
+                <option value="all">Tous statuts</option>
+                <option value="SUCCESS">Succès (Payé)</option>
+                <option value="PENDING">En attente</option>
+                <option value="FAILED">Échoué</option>
+              </select>
             </div>
           </div>
 
-          <table className="w-full text-left">
-            <thead className="bg-[#111] text-gray-400 text-[10px] font-black uppercase">
-              <tr>
-                <th className="p-4">Réf / Prospect</th>
-                <th className="p-4">Montant</th>
-                <th className="p-4">Passerelle</th>
-                <th className="p-4 text-center">Statut</th>
-                <th className="p-4 text-right">Date</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-900 text-xs">
-              {filteredTx.map((tx) => (
-                <tr key={tx.reference} className="hover:bg-[#111]/60 transition">
-                  <td className="p-4">
-                    <p className="font-extrabold text-white text-[11px]">{tx.name}</p>
-                    <p className="text-[10px] text-gray-500 font-mono font-bold leading-normal">{tx.reference} • {tx.phone}</p>
-                  </td>
-                  <td className="p-4 font-black text-white font-mono">{tx.amount.toLocaleString()} FCFA</td>
-                  <td className="p-4 font-bold text-gray-300 flex items-center gap-1 mt-2 bg-transparent">
-                    <span className={`w-2 h-2 rounded-full ${tx.provider === 'Wave' ? 'bg-[#1b93f3]' : 'bg-[#f16e00]'}`}></span>
-                    <span>{tx.provider}</span>
-                  </td>
-                  <td className="p-4 text-center">
-                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                      tx.status === 'SUCCESS' ? 'bg-green-950 text-green-400 border border-green-900/50' 
-                      : tx.status === 'PENDING' ? 'bg-amber-950 text-amber-400 border border-amber-900/50'
-                      : 'bg-red-950 text-red-400 border border-red-900/50'
-                    }`}>
-                      {tx.status}
-                    </span>
-                  </td>
-                  <td className="p-4 text-right text-[10px] text-gray-500 font-medium">{tx.timestamp}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {loading ? (
+            <div className="p-12 text-center text-zinc-500 text-xs font-mono">
+              Chargement des transactions depuis Firestore...
+            </div>
+          ) : filteredTransactions.length === 0 ? (
+            <div className="p-12 text-center text-zinc-500 text-xs">
+              <p className="font-bold text-zinc-400 mb-1">Aucune transaction trouvée</p>
+              <p className="text-[11px]">
+                Générez un lien Paystack dans le module "Conversations" pour initier un paiement réel.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-[#111] text-zinc-400 text-[9px] font-black uppercase">
+                  <tr>
+                    <th className="p-3.5">Réf Fiko / Client</th>
+                    <th className="p-3.5">Montant</th>
+                    <th className="p-3.5">Mode</th>
+                    <th className="p-3.5">Canal</th>
+                    <th className="p-3.5 text-center">Statut</th>
+                    <th className="p-3.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-900 text-xs font-sans">
+                  {filteredTransactions.map((tx) => (
+                    <tr key={tx.id || tx.reference} className="hover:bg-zinc-950/60 transition">
+                      <td className="p-3.5">
+                        <p className="font-extrabold text-white text-[11px]">{tx.customerName}</p>
+                        <p className="text-[9.5px] text-zinc-500 font-mono tracking-tight">
+                          {tx.reference}
+                        </p>
+                        {tx.customerEmail && (
+                          <p className="text-[9px] text-zinc-600 font-mono">{tx.customerEmail}</p>
+                        )}
+                      </td>
+                      <td className="p-3.5">
+                        <span className="font-black text-white font-mono text-xs">
+                          {tx.amount.toLocaleString()} FCFA
+                        </span>
+                      </td>
+                      <td className="p-3.5">
+                        <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase font-mono border ${
+                          tx.mode === 'live' 
+                            ? 'bg-emerald-950/60 text-emerald-400 border-emerald-900' 
+                            : 'bg-amber-950/60 text-amber-400 border-amber-900'
+                        }`}>
+                          {tx.mode || 'test'}
+                        </span>
+                      </td>
+                      <td className="p-3.5 text-zinc-400 text-[10px]">
+                        {tx.channel || 'Paystack'}
+                      </td>
+                      <td className="p-3.5 text-center">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase font-mono ${
+                          tx.status === 'SUCCESS' 
+                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' 
+                            : tx.status === 'PENDING' 
+                            ? 'bg-amber-950 text-amber-400 border border-amber-800'
+                            : 'bg-red-950 text-red-400 border border-red-800'
+                        }`}>
+                          {tx.status === 'SUCCESS' ? <CheckCircle size={10} /> : tx.status === 'PENDING' ? <Clock size={10} /> : <XCircle size={10} />}
+                          {tx.status}
+                        </span>
+                      </td>
+                      <td className="p-3.5 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {tx.status === 'PENDING' && (
+                            <button
+                              onClick={() => handleManualVerify(tx.reference)}
+                              disabled={verifyingRef === tx.reference}
+                              className="bg-zinc-800 hover:bg-zinc-700 text-white text-[9px] font-bold px-2 py-1 rounded transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                              title="Interroger directement l'API Paystack pour confirmer l'encaissement"
+                            >
+                              <RefreshCw size={10} className={verifyingRef === tx.reference ? 'animate-spin' : ''} />
+                              <span>Vérifier</span>
+                            </button>
+                          )}
+                          {tx.checkoutUrl && (
+                            <a
+                              href={tx.checkoutUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-zinc-400 hover:text-white p-1 rounded transition"
+                              title="Ouvrir la page de paiement Paystack"
+                            >
+                              <ExternalLink size={12} />
+                            </a>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
-        {/* DYNAMIC SETTLEMENT CHECKS - RIGHT (1 COLUMN) */}
+        {/* RIGHT SIDE: CONFIGURATION & INTEGRITY */}
         <div className="space-y-4">
           
-          <div className="bg-[#0a0a0a] border border-gray-850 rounded-2xl p-5 space-y-4">
-            <div className="flex items-center gap-2 pb-2 border-b border-gray-950">
-              <Smartphone className="text-blue-400 shrink-0" size={16} />
-              <h4 className="font-extrabold text-xs text-white uppercase tracking-wider">Passerelles Actives (CIV)</h4>
+          {/* PAYSTACK OFFICIAL INTEGRATION CARD */}
+          <div className="bg-[#0a0a0a] border border-zinc-850 rounded-2xl p-5 space-y-4">
+            <div className="flex items-center gap-2 pb-2 border-b border-zinc-900">
+              <ShieldCheck className="text-emerald-400 shrink-0" size={18} />
+              <div>
+                <h4 className="font-extrabold text-xs text-white uppercase tracking-wider">
+                  Passerelle Officielle Paystack
+                </h4>
+                <span className="text-[9px] text-emerald-400 font-mono">Protocole HMAC SHA512 Actif</span>
+              </div>
             </div>
 
-            <p className="text-xs text-gray-400 leading-relaxed">
-              Pour encaisser de manière totalement autonome auprès de vos prospects sur WhatsApp, activez ou configurez les comptes marchands ci-dessous.
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Toutes les transactions sont initiées via les serveurs sécurisés Paystack. Les clés secrètes marchandes sont conservées strictement côté serveur (<span className="font-mono text-zinc-300">PAYSTACK_SECRET_KEY</span>) et ne sont jamais exposées au navigateur.
             </p>
 
-            <div className="space-y-2.5 text-xs">
-              <div className="flex justify-between items-center bg-black/60 p-3 rounded-xl border border-gray-950">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
-                  <span className="font-bold text-gray-200">Wave Côte d’Ivoire</span>
-                </div>
-                <span className="bg-emerald-950/40 text-[#25D366] text-[8px] font-black px-2 py-0.5 rounded border border-green-900">ACTIF</span>
+            <div className="space-y-2 text-xs font-mono">
+              <div className="p-2.5 rounded-xl bg-black border border-zinc-900 flex justify-between items-center">
+                <span className="text-zinc-500 text-[10px]">WEBHOOK URL :</span>
+                <span className="text-zinc-300 text-[10px] select-all">/api/paystack/webhook</span>
               </div>
-
-              <div className="flex justify-between items-center bg-black/60 p-3 rounded-xl border border-gray-950">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-orange-500"></span>
-                  <span className="font-bold text-gray-200">Orange Money CIV</span>
-                </div>
-                <span className="bg-emerald-950/40 text-[#25D366] text-[8px] font-black px-2 py-0.5 rounded border border-green-900">ACTIF</span>
+              <div className="p-2.5 rounded-xl bg-black border border-zinc-900 flex justify-between items-center">
+                <span className="text-zinc-500 text-[10px]">SIGNATURE :</span>
+                <span className="text-emerald-400 text-[10px] font-bold">x-paystack-signature</span>
               </div>
-
-              <div className="flex justify-between items-center bg-black/60 p-3 rounded-xl border border-gray-950">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>
-                  <span className="font-bold text-gray-200">MTN Mobile Money CIV</span>
-                </div>
-                <span className="bg-emerald-950/40 text-[#25D366] text-[8px] font-black px-2 py-0.5 rounded border border-green-900">ACTIF</span>
+              <div className="p-2.5 rounded-xl bg-black border border-zinc-900 flex justify-between items-center">
+                <span className="text-zinc-500 text-[10px]">SOUS-UNITÉS XOF :</span>
+                <span className="text-emerald-400 text-[10px] font-bold">Montant × 100</span>
               </div>
             </div>
           </div>
 
-          <div className="bg-[#0a0a0a] border border-gray-850 rounded-2xl p-5 space-y-3">
-            <div className="flex items-center gap-2 pb-2 border-b border-gray-950">
-              <ShieldCheck className="text-purple-400 shrink-0" size={16} />
-              <h4 className="font-extrabold text-xs text-white uppercase tracking-wider">Clé API Développeur FOS</h4>
+          {/* SUPPORTED CHANNELS */}
+          <div className="bg-[#0a0a0a] border border-zinc-850 rounded-2xl p-5 space-y-3">
+            <div className="flex items-center gap-2 pb-2 border-b border-zinc-900">
+              <Smartphone className="text-blue-400 shrink-0" size={16} />
+              <h4 className="font-extrabold text-xs text-white uppercase tracking-wider">
+                Canaux Activés via Paystack
+              </h4>
             </div>
 
-            <p className="text-[11px] text-gray-400">
-              Utilisez cette clé sécurisée pour connecter Fiko Pay à vos passerelles d'acquisitions externes ou à WooCommerce / Prestashop.
-            </p>
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between items-center bg-black/60 p-2.5 rounded-xl border border-zinc-900">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                  <span className="font-bold text-zinc-200">Wave Côte d’Ivoire</span>
+                </div>
+                <span className="text-[9px] font-mono text-emerald-400 font-bold">ACTIF</span>
+              </div>
 
-            <div className="bg-black p-2 rounded-xl border border-gray-950 flex justify-between items-center">
-              <span className="font-mono text-[10px] text-gray-500 select-all truncate">fk_live_2026_koffmann...</span>
-              <button 
-                onClick={copyApiKey}
-                className="bg-neutral-900 text-white font-extrabold px-3 py-1.5 rounded-lg text-[9px] hover:bg-neutral-850 transition"
-              >
-                {copiedKey ? 'Copié !' : 'Copier'}
-              </button>
+              <div className="flex justify-between items-center bg-black/60 p-2.5 rounded-xl border border-zinc-900">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                  <span className="font-bold text-zinc-200">Orange Money CIV</span>
+                </div>
+                <span className="text-[9px] font-mono text-emerald-400 font-bold">ACTIF</span>
+              </div>
+
+              <div className="flex justify-between items-center bg-black/60 p-2.5 rounded-xl border border-zinc-900">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
+                  <span className="font-bold text-zinc-200">MTN Mobile Money CIV</span>
+                </div>
+                <span className="text-[9px] font-mono text-emerald-400 font-bold">ACTIF</span>
+              </div>
+
+              <div className="flex justify-between items-center bg-black/60 p-2.5 rounded-xl border border-zinc-900">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                  <span className="font-bold text-zinc-200">Cartes Bancaires (Visa / Mastercard)</span>
+                </div>
+                <span className="text-[9px] font-mono text-emerald-400 font-bold">ACTIF</span>
+              </div>
             </div>
           </div>
 

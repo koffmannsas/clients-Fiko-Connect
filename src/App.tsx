@@ -31,7 +31,8 @@ import Dashboard from './components/Dashboard';
 import AutomationModule from './components/Automation';
 import LeadsModule from './components/Leads';
 import CampaignsModule from './components/Campaigns';
-import ConversationsModule from './components/Conversations';
+import ConversationsModule, { INITIAL_THREADS } from './components/Conversations';
+import { Thread } from './types';
 import PaymentsModule from './components/Payments';
 import AnalyticsModule from './components/Analytics';
 import QuantumGate from './components/QuantumGate';
@@ -41,6 +42,8 @@ export default function App() {
   const [activeItem, setActiveItem] = useState('Dashboard');
   const [autoPilot, setAutoPilot] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [threads, setThreads] = useState<Thread[]>(INITIAL_THREADS);
+  const unreadCount = threads.filter(t => t.unread).length;
   const [onboardingData, setOnboardingData] = useState<any>({
     companyName: 'Koffmann Capital Group',
     businessType: 'services',
@@ -110,15 +113,22 @@ export default function App() {
           {menuItems.map((item) => (
             <li
               key={item.name}
-              className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer font-semibold text-xs tracking-wide transition-all ${
+              className={`flex items-center justify-between p-3 rounded-xl cursor-pointer font-semibold text-xs tracking-wide transition-all ${
                 activeItem === item.name 
                   ? 'bg-[#E10600] text-white' 
                   : 'text-gray-400 hover:text-white hover:bg-[#111]'
               }`}
               onClick={() => setActiveItem(item.name)}
             >
-              <item.icon size={16} className="stroke-[2px]" />
-              {item.name}
+              <div className="flex items-center gap-3">
+                <item.icon size={16} className="stroke-[2px]" />
+                {item.name}
+              </div>
+              {item.name === 'Conversations' && unreadCount > 0 && (
+                <span className="bg-[#E10600] text-white text-[10px] font-black px-1.5 py-0.5 rounded-full">
+                  {unreadCount}
+                </span>
+              )}
             </li>
           ))}
         </ul>
@@ -218,11 +228,19 @@ export default function App() {
             <h1 className="text-3xl font-[900] tracking-tight">{activeItem}</h1>
             
             <div className="flex items-center gap-6">
-                <div className="relative cursor-pointer">
-                    <Bell size={20} className="text-gray-400 hover:text-white transition" />
-                    {/* Badge logic placeholder - assumed hasUnread from global state */}
-                    {true && (
-                      <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-[#E10600] border-2 border-[#050505]"></span>
+                <div 
+                  onClick={() => setActiveItem('Conversations')}
+                  className="relative cursor-pointer p-2 rounded-xl hover:bg-zinc-900 transition flex items-center justify-center group"
+                  title={unreadCount > 0 ? `${unreadCount} message(s) non lu(s) dans Conversations` : 'Conversations : aucun message non lu'}
+                  role="button"
+                  aria-label="Notifications"
+                >
+                    <Bell size={20} className="text-gray-400 group-hover:text-white transition" />
+                    {unreadCount > 0 && (
+                      <span className="absolute top-1 right-1 flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#E10600] opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#E10600] border-2 border-[#050505]"></span>
+                      </span>
                     )}
                 </div>
                 
@@ -250,7 +268,12 @@ export default function App() {
         {activeItem === 'Automation' && <AutomationModule />}
         {activeItem === 'Fiko leads' && <LeadsModule />}
         {activeItem === 'Campagnes' && <CampaignsModule />}
-        {activeItem === 'Conversations' && <ConversationsModule />}
+        {activeItem === 'Conversations' && (
+          <ConversationsModule 
+            threads={threads} 
+            onThreadsChange={setThreads} 
+          />
+        )}
         {activeItem === 'Paiements' && <PaymentsModule />}
         {activeItem === 'Analytics' && <AnalyticsModule />}
         {activeItem === 'Settings' && (

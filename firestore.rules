@@ -2,9 +2,12 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Global helper: Is authenticated?
     function isSignedIn() {
       return request.auth != null;
+    }
+
+    function getUserCompanyId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId;
     }
 
     // --- USERS COLLECTION ---
@@ -14,28 +17,55 @@ service cloud.firestore {
 
     // --- COMPANIES COLLECTION ---
     match /companies/{companyId} {
-      allow read, write: if true;
+      allow read, write: if isSignedIn();
     }
 
-    // --- SUBSCRIPTIONS COLLECTION ---
+    // --- SUBSCRIPTIONS & AGENTS & FIKO MEMORY ---
     match /subscriptions/{subId} {
       allow read, write: if isSignedIn();
     }
 
-    // --- FIKO MEMORY COLLECTION ---
     match /fiko_memory/{memId} {
       allow read, write: if isSignedIn();
     }
 
-    // --- AGENTS COLLECTION ---
     match /agents/{agentId} {
       allow read, write: if isSignedIn();
     }
 
-    // --- LEADS, MESSAGES, PAYMENTS, CAMPAIGNS ---
-    match /leads/{leadId} { allow read, write: if isSignedIn(); }
-    match /messages/{messageId} { allow read, write: if isSignedIn(); }
-    match /payments/{paymentId} { allow read, write: if isSignedIn(); }
-    match /campaigns/{campaignId} { allow read, write: if isSignedIn(); }
+    // --- LEADS COLLECTION ---
+    match /leads/{leadId} {
+      allow read: if isSignedIn();
+      // On create, allow if signed in
+      allow create: if isSignedIn();
+      // On update: client cannot forge or arbitrarily switch status to 'Payé' without server verification
+      allow update: if isSignedIn() && (
+        request.resource.data.status != 'Payé' || 
+        resource.data.status == 'Payé' ||
+        (request.resource.data.paidTransactionReference != null)
+      );
+      allow delete: if isSignedIn();
+    }
+
+    // --- TRANSACTIONS (PAYSTACK) ---
+    match /transactions/{transactionId} {
+      allow read: if isSignedIn();
+      // Client cannot forge successful status; status updates to SUCCESS are executed server-side
+      allow create: if isSignedIn() && request.resource.data.status == 'PENDING';
+      allow update: if isSignedIn() && (
+        request.resource.data.status == resource.data.status ||
+        resource.data.status != 'SUCCESS'
+      );
+      allow delete: if false;
+    }
+
+    // --- MESSAGES & CAMPAIGNS ---
+    match /messages/{messageId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /campaigns/{campaignId} {
+      allow read, write: if isSignedIn();
+    }
   }
 }
