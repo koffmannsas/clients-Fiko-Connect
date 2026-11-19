@@ -17,6 +17,15 @@ import {
   getWhatsAppConfigStatus 
 } from "./server/whatsapp";
 import { updateLeadStage } from "./server/leads";
+import {
+  simulateKnowledgeResponse,
+  ingestKnowledgeWithAI,
+} from "./server/knowledge";
+import {
+  streamDeepScanUrl,
+  streamDeepScanDocument,
+  handleLearningLiveChat,
+} from "./server/deepScan";
 
 // Initialize Gemini AI (Lazy initialization)
 let aiClient: GoogleGenAI | null = null;
@@ -58,6 +67,13 @@ async function startServer() {
 
   // --- CRM LEADS STAGES ---
   app.post("/api/leads/update-stage", requireAuth as any, updateLeadStage as any);
+
+  // --- FIKO KNOWLEDGE ENGINE V3.0 ---
+  app.post("/api/knowledge/simulate", requireAuth as any, simulateKnowledgeResponse as any);
+  app.post("/api/knowledge/ingest", requireAuth as any, ingestKnowledgeWithAI as any);
+  app.post("/api/knowledge/deep-scan/stream", requireAuth as any, streamDeepScanUrl as any);
+  app.post("/api/knowledge/deep-scan/document", requireAuth as any, streamDeepScanDocument as any);
+  app.post("/api/knowledge/learning-chat", requireAuth as any, handleLearningLiveChat as any);
 
   // --- AI CAMPAIGN ASSISTANT ROUTES ---
   app.post("/api/campaigns/generate", async (req, res) => {

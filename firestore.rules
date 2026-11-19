@@ -67,5 +67,53 @@ service cloud.firestore {
     match /campaigns/{campaignId} {
       allow read, write: if isSignedIn();
     }
+
+    // --- FIKO KNOWLEDGE ENGINE V3.0 ---
+    match /fiko_knowledge_profiles/{companyId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.resource.data.companyId is string;
+    }
+
+    match /knowledge_items/{itemId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.resource.data.companyId is string;
+      allow delete: if isSignedIn();
+    }
+
+    match /knowledge_training/{ruleId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.resource.data.companyId is string;
+      allow delete: if isSignedIn();
+    }
+
+    match /knowledge_approvals/{approvalId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.resource.data.companyId is string;
+      allow delete: if isSignedIn();
+    }
+
+    match /knowledge_learning/{suggestionId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.resource.data.companyId is string;
+      allow delete: if isSignedIn();
+    }
+
+    match /knowledge_scan_jobs/{jobId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.resource.data.companyId is string;
+      allow delete: if isSignedIn();
+    }
+
+    match /knowledge_learning_sessions/{companyId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.resource.data.companyId is string;
+      allow delete: if isSignedIn();
+    }
+
+    match /knowledge_versions/{versionId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.resource.data.companyId is string;
+      allow delete: if isSignedIn();
+    }
   }
 }

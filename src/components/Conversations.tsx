@@ -22,6 +22,7 @@ import { Thread, ChatMessage, PaystackWidgetData } from '../types';
 export type { Thread };
 import { checkWhatsAppServiceWindow } from '../lib/whatsapp';
 import { apiPaystackInitialize, apiPaystackVerify, apiWhatsAppSend } from '../lib/api';
+import { useCurrency } from '../lib/currency';
 
 export const INITIAL_THREADS: Thread[] = [
   {
@@ -89,6 +90,7 @@ export default function ConversationsModule({
   threads: externalThreads, 
   onThreadsChange 
 }: ConversationsModuleProps = {}) {
+  const { formatMoney, formatFcfa, isBaseFcfa } = useCurrency();
   const [internalThreads, setInternalThreads] = useState<Thread[]>(INITIAL_THREADS);
   const threads = externalThreads ?? internalThreads;
   const setThreads = onThreadsChange ?? setInternalThreads;
@@ -437,9 +439,16 @@ export default function ConversationsModule({
                             Passerelle Paystack ({paystackWidget.currency})
                           </span>
                         </div>
-                        <span className="font-mono text-xs font-black text-white">
-                          {paystackWidget.amountCommercial.toLocaleString()} FCFA
-                        </span>
+                        <div className="text-right">
+                          <span className="font-mono text-xs font-black text-white block">
+                            {formatMoney(paystackWidget.amountCommercial)}
+                          </span>
+                          {!isBaseFcfa && (
+                            <span className="font-mono text-[9px] text-zinc-500 block">
+                              {formatFcfa(paystackWidget.amountCommercial)}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="text-[10px] text-zinc-400 space-y-1 font-mono">
@@ -606,7 +615,8 @@ export default function ConversationsModule({
                   <span className="absolute right-3 top-3 text-zinc-500 font-mono font-bold text-xs">FCFA</span>
                 </div>
                 <p className="text-[10px] text-zinc-500 mt-1 font-mono">
-                  Équivalent envoyé à Paystack : {(paystackAmount * 100).toLocaleString()} centimes/subunits
+                  Équivalent envoyé à Paystack : {(paystackAmount * 100).toLocaleString('fr-FR')} centimes/subunits
+                  {!isBaseFcfa ? ` • Aperçu : ${formatMoney(paystackAmount)}` : ''}
                 </p>
               </div>
 

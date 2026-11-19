@@ -1,5 +1,8 @@
+import { useCurrency } from '../lib/currency';
 
 export default function AutomationModule() {
+  const { formatMoney } = useCurrency();
+
   return (
     <div className="text-white">
       {/* HEADER */}
@@ -27,12 +30,12 @@ export default function AutomationModule() {
       </div>
 
       {/* SCENARIO LIST */}
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-[#0a0a0a] p-6 rounded-2xl border border-gray-800 flex flex-col gap-2">
           <h3 className="font-bold text-lg">Closing automatique</h3>
           <p className="text-gray-400 text-sm">
             Conversion : 18% <br />
-            Revenus : 120 000 FCFA
+            Revenus : <span className="font-mono text-emerald-400 font-bold">{formatMoney(120000)}</span>
           </p>
           <button className='text-sm text-fiko-red font-semibold hover:underline mt-4 self-start'>Optimiser</button>
         </div>
@@ -40,7 +43,7 @@ export default function AutomationModule() {
           <h3 className="font-bold text-lg">Relance Panier</h3>
           <p className="text-gray-400 text-sm">
             Conversion : 12% <br />
-            Revenus : 45 000 FCFA
+            Revenus : <span className="font-mono text-emerald-400 font-bold">{formatMoney(45000)}</span>
           </p>
           <button className='text-sm text-fiko-red font-semibold hover:underline mt-4 self-start'>Optimiser</button>
         </div>

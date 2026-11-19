@@ -69,6 +69,122 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "companyId", "name", "status", "autoPilot", "createdAt"]
+    },
+    "KnowledgeProfile": {
+      "title": "KnowledgeProfile",
+      "description": "Company Business Identity Engine and Sales Authority Engine configuration.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string" },
+        "identity": { "type": "object" },
+        "policy": { "type": "object" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "identity", "policy", "updatedAt"]
+    },
+    "KnowledgeItem": {
+      "title": "KnowledgeItem",
+      "description": "Verified or pending business knowledge unit with source traceability.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 180 },
+        "category": { "type": "string" },
+        "content": { "type": "string", "maxLength": 4000 },
+        "status": { "type": "string", "enum": ["validated", "pending_verification", "rejected", "conflict"] },
+        "source": { "type": "string" },
+        "validUntil": { "type": "string" },
+        "responsible": { "type": "string" },
+        "scope": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "companyId", "title", "category", "content", "status", "source"]
+    },
+    "TrainingRule": {
+      "title": "TrainingRule",
+      "description": "Fiko Training Academy rule or conversation scenario.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "title": { "type": "string" },
+        "scenarioType": { "type": "string" },
+        "customerTrigger": { "type": "string" },
+        "expectedBehavior": { "type": "string" },
+        "testedBeforeActivation": { "type": "boolean" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "companyId", "title", "customerTrigger", "expectedBehavior"]
+    },
+    "HumanApproval": {
+      "title": "HumanApproval",
+      "description": "Human Approval Engine escalation queue item.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerMessage": { "type": "string" },
+        "requestedAction": { "type": "string" },
+        "truthLevel": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "resolved"] }
+      },
+      "required": ["id", "companyId", "customerMessage", "truthLevel", "status"]
+    },
+    "LearningSuggestion": {
+      "title": "LearningSuggestion",
+      "description": "Continuous Learning Engine unanswered query and improvement suggestion.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "unansweredQuestion": { "type": "string" },
+        "status": { "type": "string", "enum": ["suggested", "converted_to_pending", "dismissed"] }
+      },
+      "required": ["id", "companyId", "unansweredQuestion", "status"]
+    },
+    "ScanJob": {
+      "title": "ScanJob",
+      "description": "Fiko Deep Scan job record storing crawled pages and extraction counts per company.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "sourceType": { "type": "string", "enum": ["website", "document"] },
+        "sourceLabel": { "type": "string" },
+        "status": { "type": "string", "enum": ["completed", "failed"] },
+        "extractedCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "companyId", "sourceType", "sourceLabel", "status", "createdAt"]
+    },
+    "LearningSession": {
+      "title": "LearningSession",
+      "description": "Persistent Fiko Learning Live conversational training history per company.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string" },
+        "currentStep": { "type": "integer" },
+        "messages": { "type": "array" },
+        "pendingClarifications": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "currentStep", "messages", "updatedAt"]
+    },
+    "KnowledgeVersion": {
+      "title": "KnowledgeVersion",
+      "description": "Versioned snapshot of approved knowledge base enabling instant rollback.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "versionNumber": { "type": "integer" },
+        "label": { "type": "string" },
+        "approvedCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "companyId", "versionNumber", "label", "createdAt"]
     }
   },
   "firestore": {
@@ -91,6 +207,38 @@
     "/agents/{agentId}": {
       "schema": "Agent",
       "description": "Configured assistant agents"
+    },
+    "/fiko_knowledge_profiles/{companyId}": {
+      "schema": "KnowledgeProfile",
+      "description": "Business Identity and Sales Authority policy per company"
+    },
+    "/knowledge_items/{itemId}": {
+      "schema": "KnowledgeItem",
+      "description": "Company knowledge base items with truth status and source traceability"
+    },
+    "/knowledge_training/{ruleId}": {
+      "schema": "TrainingRule",
+      "description": "Training Academy instructions and sales scenarios"
+    },
+    "/knowledge_approvals/{approvalId}": {
+      "schema": "HumanApproval",
+      "description": "Human Approval Engine escalation queue"
+    },
+    "/knowledge_learning/{suggestionId}": {
+      "schema": "LearningSuggestion",
+      "description": "Continuous Learning unanswered questions awaiting human validation"
+    },
+    "/knowledge_scan_jobs/{jobId}": {
+      "schema": "ScanJob",
+      "description": "Fiko Deep Scan history and crawled source records"
+    },
+    "/knowledge_learning_sessions/{companyId}": {
+      "schema": "LearningSession",
+      "description": "Fiko Learning Live persistent conversational training sessions"
+    },
+    "/knowledge_versions/{versionId}": {
+      "schema": "KnowledgeVersion",
+      "description": "Versioned snapshots of approved company knowledge bases"
     }
   }
 }

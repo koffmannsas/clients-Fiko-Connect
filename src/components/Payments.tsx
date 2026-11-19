@@ -17,8 +17,10 @@ import { auth, db } from '../lib/firebase';
 import { collection, query, where, onSnapshot, orderBy, doc, getDoc } from 'firebase/firestore';
 import { apiVerifyPaystackPayment, apiGetPaystackStatus } from '../lib/api';
 import { PaymentTransactionRecord } from '../types';
+import { useCurrency, formatCurrencyAmount, CURRENCIES, CurrencyCode } from '../lib/currency';
 
 export default function PaymentsModule() {
+  const { formatMoney, formatFcfa, isBaseFcfa, currency } = useCurrency();
   const [transactions, setTransactions] = useState<PaymentTransactionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [verifyingRef, setVerifyingRef] = useState<string | null>(null);
@@ -258,7 +260,10 @@ export default function PaymentsModule() {
               Vérifié
             </span>
           </div>
-          <p className="text-2xl font-black text-white font-mono">{liveRevenue.toLocaleString()} FCFA</p>
+          <p className="text-2xl font-black text-white font-mono">{formatMoney(liveRevenue)}</p>
+          {!isBaseFcfa && (
+            <p className="text-[10px] font-mono text-zinc-400 mt-0.5">Base : {formatFcfa(liveRevenue)}</p>
+          )}
           <div className="text-[10px] text-zinc-500 mt-3 pt-3 border-t border-zinc-900 flex justify-between">
             <span>Transactions Live : <strong className="text-white font-mono">{liveSuccessful.length}</strong></span>
             <span className="text-[#25D366] font-bold">100% encaissé</span>
@@ -275,7 +280,10 @@ export default function PaymentsModule() {
               Test
             </span>
           </div>
-          <p className="text-2xl font-black text-amber-200 font-mono">{testRevenue.toLocaleString()} FCFA</p>
+          <p className="text-2xl font-black text-amber-200 font-mono">{formatMoney(testRevenue)}</p>
+          {!isBaseFcfa && (
+            <p className="text-[10px] font-mono text-zinc-400 mt-0.5">Base : {formatFcfa(testRevenue)}</p>
+          )}
           <div className="text-[10px] text-zinc-500 mt-3 pt-3 border-t border-zinc-900">
             <span>Transactions Test : <strong className="text-amber-300 font-mono">{testSuccessful.length}</strong> (isolées du CA réel)</span>
           </div>
@@ -301,6 +309,33 @@ export default function PaymentsModule() {
           <p className="text-[10px] text-emerald-400 mt-3 flex items-center gap-1">
             <TrendingUp size={12} /> Sur l'ensemble des liens émis
           </p>
+        </div>
+      </div>
+
+      {/* MULTI-CURRENCY EQUIVALENCE STRIP */}
+      <div className="bg-[#0a0a0f] border border-zinc-900 rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+        <div className="text-xs">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-[#25D366] font-black block">
+            ÉQUIVALENCE MULTI-DEVISE (CA LIVE + SANDBOX)
+          </span>
+          <span className="text-zinc-400 text-[11px]">
+            Base comptable : <strong className="text-white font-mono">{formatFcfa(liveRevenue > 0 ? liveRevenue : testRevenue)}</strong>
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {(['XOF', 'EUR', 'USD', 'GBP', 'GHS', 'NGN'] as CurrencyCode[])
+            .filter((code) => code !== currency)
+            .map((code) => (
+              <div
+                key={code}
+                className="bg-black border border-zinc-800 rounded-xl px-3 py-1.5 text-[11px] font-mono flex items-center gap-2"
+              >
+                <span className="text-zinc-500">{CURRENCIES[code].flag} {code}</span>
+                <span className="text-white font-bold">
+                  {formatCurrencyAmount(liveRevenue > 0 ? liveRevenue : testRevenue, code)}
+                </span>
+              </div>
+            ))}
         </div>
       </div>
 
@@ -387,9 +422,14 @@ export default function PaymentsModule() {
                         )}
                       </td>
                       <td className="p-3.5">
-                        <span className="font-black text-white font-mono text-xs">
-                          {tx.amount.toLocaleString()} FCFA
+                        <span className="font-black text-white font-mono text-xs block">
+                          {formatMoney(tx.amount)}
                         </span>
+                        {!isBaseFcfa && (
+                          <span className="text-[9px] text-zinc-500 font-mono block">
+                            {formatFcfa(tx.amount)}
+                          </span>
+                        )}
                       </td>
                       <td className="p-3.5">
                         <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase font-mono border ${

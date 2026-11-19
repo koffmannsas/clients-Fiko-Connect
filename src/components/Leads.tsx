@@ -31,6 +31,7 @@ import { Lead } from '../types';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { apiUpdateLeadStage } from '../lib/api';
+import { useCurrency } from '../lib/currency';
 
 const DEFAULT_INITIAL_LEADS: Lead[] = [
   { id: '1', name: 'Marie Koné', phone: '+225 07 48 93 11 20', score: 95, status: 'Négociation', lastActivity: 'Il y a 5 min', dealValue: 45000, provider: 'Paystack', notes: 'Intéressée par le pack Luxe. Attend le lien de paiement Paystack.', lastMessage: 'Je veux acheter le pack, vous prenez Wave ou Carte ?' },
@@ -42,6 +43,7 @@ const DEFAULT_INITIAL_LEADS: Lead[] = [
 ];
 
 export default function LeadsModule() {
+  const { formatMoney, formatFcfa, isBaseFcfa } = useCurrency();
   const [viewMode, setViewMode] = useState<'pipeline' | 'table'>('pipeline');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
@@ -215,7 +217,7 @@ export default function LeadsModule() {
                   <div>
                     <h4 className="font-black text-xs text-white">{lane.label}</h4>
                     <span className="text-[10px] text-zinc-500 font-mono">
-                      {laneRevenue.toLocaleString()} FCFA
+                      {formatMoney(laneRevenue)}
                     </span>
                   </div>
                   <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${lane.countBg}`}>
@@ -246,7 +248,7 @@ export default function LeadsModule() {
 
                       <div className="flex justify-between items-center pt-2 border-t border-zinc-900 text-[10px]">
                         <span className="font-mono font-black text-emerald-400">
-                          {(lead.paidAmount || lead.dealValue || 0).toLocaleString()} FCFA
+                          {formatMoney(lead.paidAmount || lead.dealValue || 0)}
                         </span>
                         
                         {lead.paidTransactionReference ? (
@@ -338,7 +340,7 @@ export default function LeadsModule() {
                       </select>
                     </td>
                     <td className="p-3.5 font-mono font-bold text-emerald-400">
-                      {(lead.paidAmount || lead.dealValue || 0).toLocaleString()} FCFA
+                      {formatMoney(lead.paidAmount || lead.dealValue || 0)}
                     </td>
                     <td className="p-3.5">
                       {lead.paidTransactionReference ? (
@@ -406,7 +408,10 @@ export default function LeadsModule() {
                       <CheckCircle size={14} /> Paiement Confirmé et Vérifié Côté Serveur
                     </p>
                     <p className="text-zinc-400">Réf : {selectedLead.paidTransactionReference}</p>
-                    <p className="text-zinc-400">Montant : {selectedLead.paidAmount?.toLocaleString()} FCFA</p>
+                    <p className="text-zinc-400">
+                      Montant : {formatMoney(selectedLead.paidAmount || 0)}
+                      {!isBaseFcfa && selectedLead.paidAmount ? ` (${formatFcfa(selectedLead.paidAmount)})` : ''}
+                    </p>
                     {selectedLead.paidAt && <p className="text-zinc-500">Date : {new Date(selectedLead.paidAt).toLocaleString()}</p>}
                   </div>
                 ) : (

@@ -13,6 +13,27 @@ import {
   verifyMetaWebhookSignature, 
   verifyPaystackWebhookSignature 
 } from '../server/webhook-verify.ts';
+import {
+  convertFromXOF,
+  convertToXOF,
+  formatCurrencyAmount,
+  formatBaseFCFA
+} from '../src/lib/currencyUtils.ts';
+import {
+  createDemoKnowledgeState,
+  evaluateTruthAndPromiseGuard,
+  retrieveVerifiedKnowledge,
+  detectKnowledgeConflicts,
+  parseRawKnowledgeText,
+  computeKnowledgeMastery,
+  extractTextAndTitleFromHtml,
+  conductFikoLearningTurn,
+  buildMasteryAuditReport
+} from '../src/lib/knowledgeEngine.ts';
+import {
+  isPrivateOrReservedIp,
+  validateSafeExternalUrl
+} from '../server/deepScan.ts';
 
 describe('Suite 1: Validation des Conversions Paystack en Sous-Unités XOF (Franc CFA)', () => {
   it('convertit correctement les montants FCFA en centimes (sous-unités entières)', () => {
@@ -342,3 +363,236 @@ describe('Suite 12: Rejet des Requêtes Non Authentifiées', () => {
     assert.equal(enforceBearerAuth('Bearer mock_valid_jwt_token').statusCode, 200);
   });
 });
+
+describe('Suite 13: Conversion Multi-Devise & Formatage FCFA (XOF)', () => {
+  it('préserve la parité exacte 1:1 en FCFA (XOF et XAF)', () => {
+    assert.equal(convertFromXOF(3250000, 'XOF'), 3250000);
+    assert.equal(convertFromXOF(3250000, 'XAF'), 3250000);
+    assert.equal(convertToXOF(45000, 'XOF'), 45000);
+    assert.equal(convertToXOF(45000, 'XAF'), 45000);
+    assert.match(formatBaseFCFA(3250000), /FCFA$/);
+    assert.match(formatCurrencyAmount(45000, 'XOF'), /FCFA$/);
+  });
+
+  it('applique la parité fixe officielle BCEAO entre FCFA et EUR (1 € = 655,957 FCFA)', () => {
+    const eur = convertFromXOF(655957, 'EUR');
+    assert.equal(eur, 1000);
+    const backToXof = convertToXOF(1000, 'EUR');
+    assert.equal(backToXof, 655957);
+    assert.match(formatCurrencyAmount(655957, 'EUR'), /€/);
+  });
+
+  it('convertit proprement vers USD, GBP, GHS et NGN avec gestion des valeurs non finies', () => {
+    assert.equal(convertFromXOF(61000, 'USD'), 100);
+    assert.equal(convertToXOF(100, 'USD'), 61000);
+    assert.equal(convertFromXOF(77500, 'GBP'), 100);
+    assert.equal(convertFromXOF(4200, 'GHS'), 100);
+    assert.equal(convertFromXOF(400, 'NGN'), 1000);
+
+    assert.equal(convertFromXOF(Number.NaN, 'EUR'), 0);
+    assert.equal(convertToXOF(Number.POSITIVE_INFINITY, 'USD'), 0);
+
+    assert.match(formatCurrencyAmount(61000, 'USD'), /^\$/);
+    assert.match(formatCurrencyAmount(77500, 'GBP'), /^£/);
+    assert.match(formatCurrencyAmount(4200, 'GHS'), /GH₵/);
+    assert.match(formatCurrencyAmount(400, 'NGN'), /₦/);
+  });
+});
+
+describe('Suite 14: Fiko Knowledge Engine™ — Truth & Promise Guard, RAG Vérifié & Ingestion', () => {
+  const demo = createDemoKnowledgeState('comp_froid_test');
+
+  it('initialise la maquette conceptuelle à 24 connaissances (18 validées, 6 à vérifier) et calcule la maîtrise métier', () => {
+    const validated = demo.items.filter((i) => i.status === 'validated');
+    const pending = demo.items.filter((i) => i.status === 'pending_verification' || i.status === 'conflict');
+    assert.equal(demo.items.length, 24);
+    assert.equal(validated.length, 18);
+    assert.equal(pending.length, 6);
+
+    const mastery = computeKnowledgeMastery({
+      identity: demo.identity,
+      items: demo.items,
+      trainingRules: demo.trainingRules,
+      policy: demo.policy,
+    });
+    assert.ok(mastery >= 70 && mastery <= 100);
+  });
+
+  it('bloque le cas Climatisation Bingerville 14h + garantie de réparation sans inventer de disponibilité', () => {
+    const res = evaluateTruthAndPromiseGuard({
+      customerMessage:
+        "Bonjour, pouvez-vous venir à Bingerville aujourd'hui à 14 h et me garantir que ma climatisation sera réparée ?",
+      identity: demo.identity,
+      knowledgeItems: demo.items,
+      policy: demo.policy,
+      trainingRules: demo.trainingRules,
+    });
+
+    assert.equal(res.truthLevel, 'forbidden_action');
+    assert.equal(res.allowedToPromise, false);
+    assert.equal(res.requiresHumanApproval, true);
+    assert.ok(res.blockedClaims.length >= 2);
+    assert.match(res.safeReply, /Bingerville/);
+    assert.match(res.safeReply, /vérifier la disponibilité/i);
+    assert.match(res.safeReply, /diagnostic/i);
+  });
+
+  it('répond avec le tarif approuvé de 10 000 FCFA et cite la source officielle', () => {
+    const res = evaluateTruthAndPromiseGuard({
+      customerMessage: 'Combien coûte un entretien simple de climatiseur split ?',
+      identity: demo.identity,
+      knowledgeItems: demo.items,
+      policy: demo.policy,
+    });
+
+    assert.equal(res.truthLevel, 'validated_info');
+    assert.equal(res.allowedToPromise, true);
+    assert.equal(res.requiresHumanApproval, false);
+    assert.ok(res.citedSources.length >= 1);
+    assert.match(res.safeReply, /10[\s\u202f\u00a0]000 FCFA/);
+  });
+
+  it('escalade une demande de remise de 30 % dépassant le plafond autonome de 10 %', () => {
+    const res = evaluateTruthAndPromiseGuard({
+      customerMessage: 'Faites-moi 30 % de remise sur ce contrat.',
+      identity: demo.identity,
+      knowledgeItems: demo.items,
+      policy: demo.policy,
+    });
+
+    assert.equal(res.truthLevel, 'approval_required');
+    assert.equal(res.allowedToPromise, false);
+    assert.equal(res.requiresHumanApproval, true);
+    assert.equal(res.detectedDiscountPercent, 30);
+  });
+
+  it('refuse de supposer sur une zone inconnue (Korhogo) et demande confirmation équipe', () => {
+    const res = evaluateTruthAndPromiseGuard({
+      customerMessage: 'Livrez-vous à Korhogo ?',
+      identity: demo.identity,
+      knowledgeItems: demo.items,
+      policy: demo.policy,
+    });
+
+    assert.equal(res.truthLevel, 'unknown_info');
+    assert.equal(res.allowedToPromise, false);
+    assert.equal(res.requiresHumanApproval, true);
+    assert.match(res.safeReply, /Korhogo/);
+    assert.match(res.safeReply, /confirmer/i);
+  });
+
+  it('exclut strictement les brouillons, conflits et autres entreprises dans Verified RAG Engine™', () => {
+    const resultsPromo = retrieveVerifiedKnowledge('promo 8500 entretien', demo.items, 'comp_froid_test');
+    assert.equal(resultsPromo.some((r) => r.id === 'k_19'), false);
+
+    const crossTenantResults = retrieveVerifiedKnowledge('entretien split', demo.items, 'other_company_id');
+    assert.equal(crossTenantResults.length, 0);
+  });
+
+  it('détecte les contradictions tarifaires et place toute nouvelle ingestion en statut pending_verification', () => {
+    const conflict = detectKnowledgeConflicts(
+      {
+        title: 'Entretien climatiseur split promo',
+        content: 'Entretien climatiseur split à 8 500 FCFA',
+        category: 'tarif',
+        approvedPriceFCFA: 8500,
+      },
+      demo.items
+    );
+
+    assert.ok(conflict);
+    assert.equal(conflict.type, 'contradiction');
+
+    const parsed = parseRawKnowledgeText(
+      'Entretien split;Nettoyage complet à 10 000 FCFA',
+      'comp_froid_test',
+      'catalogue.csv',
+      'csv',
+      'Direction'
+    );
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0].status, 'pending_verification');
+    assert.equal(parsed[0].approvedPriceFCFA, 10000);
+  });
+});
+
+describe('Suite 15: Fiko Deep Scan™ (Sécurité SSRF, Extraction HTML) & Learning Live™ V3.0', () => {
+  it('bloque toutes les IP privées, loopback, link-local et métadonnées Cloud (protection SSRF)', async () => {
+    assert.equal(isPrivateOrReservedIp('127.0.0.1'), true);
+    assert.equal(isPrivateOrReservedIp('10.0.0.5'), true);
+    assert.equal(isPrivateOrReservedIp('172.16.4.12'), true);
+    assert.equal(isPrivateOrReservedIp('192.168.1.10'), true);
+    assert.equal(isPrivateOrReservedIp('169.254.169.254'), true);
+    assert.equal(isPrivateOrReservedIp('::1'), true);
+    assert.equal(isPrivateOrReservedIp('8.8.8.8'), false);
+
+    const blockedUrls = [
+      'http://127.0.0.1:3000/admin',
+      'http://169.254.169.254/latest/meta-data',
+      'http://localhost:8080',
+      'http://192.168.1.10/router',
+      'file:///etc/passwd',
+      'ftp://example.com/data',
+    ];
+
+    for (const bad of blockedUrls) {
+      const check = await validateSafeExternalUrl(bad, true);
+      assert.equal(check.ok, false, `L'URL dangereuse ${bad} devait être bloquée`);
+    }
+
+    const validCheck = await validateSafeExternalUrl('kcg-ci.com', true);
+    assert.equal(validCheck.ok, true);
+    if (validCheck.ok) {
+      assert.equal(validCheck.url.protocol, 'https:');
+      assert.equal(validCheck.url.hostname, 'kcg-ci.com');
+    }
+  });
+
+  it('extrait proprement le titre, les en-têtes et le texte nettoyé depuis du HTML réel', () => {
+    const html = `
+      <html>
+        <head><title>KCG CI — Services Climatisation Abidjan</title><script>console.log("ignore")</script></head>
+        <body>
+          <h1>Nos Offres B2B</h1>
+          <p>Entretien split complet à 10 000 FCFA à Cocody et Plateau.</p>
+          <h2>Contact Rapide</h2>
+        </body>
+      </html>
+    `;
+    const extracted = extractTextAndTitleFromHtml(html);
+    assert.equal(extracted.title, 'KCG CI — Services Climatisation Abidjan');
+    assert.deepEqual(extracted.headings, ['Nos Offres B2B', 'Contact Rapide']);
+    assert.match(extracted.cleanText, /10 000 FCFA/);
+    assert.doesNotMatch(extracted.cleanText, /console\.log/);
+  });
+
+  it('structure les faits du dirigeant dans Fiko Learning Live™ et consomme les clarifications Deep Scan', () => {
+    const demo = createDemoKnowledgeState('comp_live_v3');
+    const turn = conductFikoLearningTurn({
+      leaderMessage: 'Notre entretien split coûte 12 000 FCFA à Cocody et Marcory avec remise max 8 %.',
+      currentStep: 1,
+      identity: demo.identity,
+      knowledgeItems: demo.items,
+      policy: demo.policy,
+      pendingClarifications: ['Confirmez-vous la couverture de Bingerville ?'],
+    });
+
+    assert.equal(turn.nextStep, 2);
+    assert.equal(turn.extractedFacts.some((f) => f.approvedPriceFCFA === 12000), true);
+    assert.equal(turn.detectedZones.includes('Cocody'), true);
+    assert.equal(turn.detectedDiscountLimit, 8);
+    assert.match(turn.fikoReply, /Bingerville/);
+    assert.equal(turn.remainingClarifications.length, 0);
+  });
+
+  it('génère un Audit de Maîtrise transparent (ce que Fiko sait, ignore et bloque)', () => {
+    const demo = createDemoKnowledgeState('comp_audit_v3');
+    const audit = buildMasteryAuditReport(demo.identity, demo.items, demo.policy);
+
+    assert.equal(audit.knownFactsCount, 18);
+    assert.equal(audit.unknownGaps.length > 0, true);
+    assert.equal(audit.authorizedCapabilities.some((c) => c.includes('Paystack')), true);
+    assert.equal(audit.blockedCapabilities.some((b) => b.includes('Garantir un résultat')), true);
+  });
+});
+

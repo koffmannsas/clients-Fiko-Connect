@@ -25,9 +25,11 @@ import {
   LogOut,
   AlertTriangle,
   Zap,
-  Bell
+  Bell,
+  Brain
 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
+import KnowledgeCenter from './components/KnowledgeCenter';
 import AutomationModule from './components/Automation';
 import LeadsModule from './components/Leads';
 import CampaignsModule from './components/Campaigns';
@@ -36,6 +38,7 @@ import { Thread } from './types';
 import PaymentsModule from './components/Payments';
 import AnalyticsModule from './components/Analytics';
 import QuantumGate from './components/QuantumGate';
+import CurrencySwitcher from './components/CurrencySwitcher';
 
 export default function App() {
   const [view, setView] = useState<'quantum' | 'dashboard'>('quantum');
@@ -67,6 +70,7 @@ export default function App() {
 
   const menuItems = [
     { name: 'Dashboard', icon: LayoutDashboard },
+    { name: 'Knowledge Center', icon: Brain },
     { name: 'Fiko leads', icon: User },
     { name: 'Campagnes', icon: Megaphone },
     { name: 'Conversations', icon: MessageSquareText },
@@ -227,7 +231,9 @@ export default function App() {
         <div className="flex justify-between items-center mb-8">
             <h1 className="text-3xl font-[900] tracking-tight">{activeItem}</h1>
             
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-4 flex-wrap">
+                <CurrencySwitcher />
+
                 <div 
                   onClick={() => setActiveItem('Conversations')}
                   className="relative cursor-pointer p-2 rounded-xl hover:bg-zinc-900 transition flex items-center justify-center group"
@@ -262,7 +268,15 @@ export default function App() {
         {activeItem === 'Dashboard' && (
           <Dashboard 
             onboardingData={onboardingData} 
+            isDemoMode={isDemoMode}
             onUpgrade={() => setView('quantum')} 
+            onOpenKnowledgeCenter={() => setActiveItem('Knowledge Center')}
+          />
+        )}
+        {activeItem === 'Knowledge Center' && (
+          <KnowledgeCenter
+            onboardingData={onboardingData}
+            isDemoMode={isDemoMode}
           />
         )}
         {activeItem === 'Automation' && <AutomationModule />}

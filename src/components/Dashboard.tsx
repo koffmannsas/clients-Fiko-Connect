@@ -1,7 +1,9 @@
 import React, { useState, useEffect, FormEvent } from 'react';
 import SaaSGrowthEngine from './SaaSGrowthEngine';
+import KnowledgeCenter from './KnowledgeCenter';
 import { auth, db } from '../lib/firebase';
 import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
+import { useCurrency } from '../lib/currency';
 import { 
   AlertTriangle, 
   Target, 
@@ -121,14 +123,17 @@ const playbookData = {
 
 interface DashboardProps {
   onboardingData?: any;
+  isDemoMode?: boolean;
   onUpgrade?: () => void;
+  onOpenKnowledgeCenter?: () => void;
 }
 
-export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps) {
+export default function Dashboard({ onboardingData, isDemoMode = false, onUpgrade, onOpenKnowledgeCenter }: DashboardProps) {
+  const { formatMoney, formatFcfa, isBaseFcfa, convertFromBase, currencyInfo } = useCurrency();
   const [pulse, setPulse] = useState(true);
   const [activeTab, setActiveTab] = useState<'command' | 'closer' | 'memory' | 'reports' | 'roadmap' | 'marketplace' | 'investor' | 'network' | 'partners'>('command');
 
-  const [roleFilter, setRoleFilter] = useState<'pme' | 'pro' | 'investor'>('pro');
+  const [roleFilter, setRoleFilter] = useState<'pme' | 'pro' | 'investor'>('pme');
   const [selectedPartnerCategory, setSelectedPartnerCategory] = useState<'all' | 'integrateur' | 'agency' | 'expert_crm' | 'expert_ia'>('all');
   const [partnerReferralAmount, setPartnerReferralAmount] = useState(150000);
   const [showInvitePartnerModal, setShowInvitePartnerModal] = useState(false);
@@ -256,15 +261,6 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
   const [scoreActions, setScoreActions] = useState({ mobMoney: false, website: false, catalog: false });
   const baseScore = 72;
   const currentFikoScore = baseScore + (scoreActions.mobMoney ? 12 : 0) + (scoreActions.website ? 8 : 0) + (scoreActions.catalog ? 5 : 0);
-
-  const [brainFiles, setBrainFiles] = useState([
-    { name: 'Scénarios de vente IA v2.pdf', size: '1.8 MB', status: 'active' as const },
-    { name: 'Grille_Tarifs_Livraison_CIV.xlsx', size: '750 KB', status: 'active' as const },
-    { name: 'Faq_Fiko_Reponses_Auto_Base.txt', size: '24 KB', status: 'active' as const }
-  ]);
-  const [newUrl, setNewUrl] = useState('');
-  const [indexingSystem, setIndexingSystem] = useState(false);
-  const [knowledgePointCount, setKnowledgePointCount] = useState(2457);
 
   const [installedAgentIds, setInstalledAgentIds] = useState<string[]>(['mode']);
   const agents = [
@@ -495,37 +491,6 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
     }, 3500);
   };
 
-  // Preserved original logic
-  const handleFileUploadSim = () => {
-    setIndexingSystem(true);
-    setTimeout(() => {
-      const newDoc = {
-        name: `Catalogue_Import_CIV_${Math.floor(Math.random() * 900 + 100)}.pdf`,
-        size: '2.4 MB',
-        status: 'active' as const
-      };
-      setBrainFiles(prev => [...prev, newDoc]);
-      setKnowledgePointCount(prev => prev + 410);
-      setIndexingSystem(false);
-    }, 1500);
-  };
-
-  const handleParseWeblinkSim = () => {
-    if (!newUrl) return;
-    setIndexingSystem(true);
-    setTimeout(() => {
-      const newDoc = {
-        name: newUrl.replace('https://', '').replace('http://', ''),
-        size: '140 KB',
-        status: 'active' as const
-      };
-      setBrainFiles(prev => [...prev, newDoc]);
-      setKnowledgePointCount(prev => prev + 185);
-      setNewUrl('');
-      setIndexingSystem(false);
-    }, 1800);
-  };
-
   const toggleAgentInstall = (id: string) => {
     if (installedAgentIds.includes(id)) {
       setInstalledAgentIds(prev => prev.filter(a => a !== id));
@@ -568,7 +533,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
             <div className="bg-[#E10600] h-full" style={{ width: '60%' }}></div>
         </div>
         <div className="bg-emerald-950/20 border border-emerald-900/50 p-4 rounded-xl text-emerald-400 text-sm">
-            🎉 FIKO A DÉJÀ COMMENCÉ À TRAVAILLER: 1 prospect capturé. Temps économisé: 12 min. Valeur: 25 000 FCFA.
+            🎉 FIKO A DÉJÀ COMMENCÉ À TRAVAILLER: 1 prospect capturé. Temps économisé: 12 min. Valeur: {formatMoney(25000)}.
         </div>
       </div>
       {/* 🛡️ META REVIEW ACCOUNT DISCRETE BANNER */}
@@ -656,6 +621,12 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
               <Activity size={14} /> Command Center
             </button>
             <button 
+              onClick={() => setActiveTab('marketplace')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all shrink-0 ${activeTab === 'marketplace' ? 'bg-[#E10600] text-white shadow-lg shadow-red-950/20' : 'text-gray-400 hover:text-white hover:bg-zinc-900/50'}`}
+            >
+              <Sparkles size={14} /> Connaissances & Agents
+            </button>
+            <button 
               onClick={() => setActiveTab('closer')}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all shrink-0 ${activeTab === 'closer' ? 'bg-[#E10600] text-white shadow-lg shadow-red-955/20' : 'text-gray-400 hover:text-white hover:bg-zinc-900/50'}`}
             >
@@ -680,7 +651,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
           <>
             <button 
               onClick={() => setActiveTab('marketplace')}
-              className={`flex items-center gap-2 px-4 py-2. shape-btn rounded-xl text-xs font-black uppercase tracking-wider transition-all shrink-0 ${activeTab === 'marketplace' ? 'bg-purple-700 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-zinc-900/50'}`}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all shrink-0 ${activeTab === 'marketplace' ? 'bg-[#E10600] text-white shadow-lg shadow-red-950/20' : 'text-gray-400 hover:text-white hover:bg-zinc-900/50'}`}
             >
               <Sparkles size={14} /> Connaissances & Agents
             </button>
@@ -819,7 +790,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                   </div>
                   <div className="flex items-center gap-2">
                     <CheckCircle className="text-[#25D366] shrink-0" size={16} />
-                    <span>Revenus Potentiels Estimés : <strong>{(onboardingData?.estimatedRevenue || 180000).toLocaleString()} FCFA</strong></span>
+                    <span>Revenus Potentiels Estimés : <strong>{formatMoney(onboardingData?.estimatedRevenue || 180000)}</strong></span>
                   </div>
                 </div>
               </div>
@@ -834,7 +805,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                 </button>
                 
                 <div className="text-center xl:text-right font-mono">
-                  <span className="text-[#25D366] font-black text-sm block">19 900 FCFA / mois</span>
+                  <span className="text-[#25D366] font-black text-sm block">{formatMoney(19900, { suffix: ' / mois' })}</span>
                   <span className="text-[10px] text-zinc-500 block mt-0.5">Sans engagement • Annulable en un clic</span>
                 </div>
               </div>
@@ -881,14 +852,55 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
               </div>
           </div>
 
+          {/* FIKO KNOWLEDGE CENTER™ — DIRECT ACCESS COCKPIT STRIP */}
+          <div className="bg-[#0a0a0f] border border-[#E10600]/40 rounded-2xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-xs text-zinc-400 font-semibold">
+                <span className="text-[#E10600] font-black uppercase tracking-wider">FIKO KNOWLEDGE CENTER™ V3.0</span>
+                <span aria-hidden="true">·</span>
+                <span>Truth &amp; Promise Guard™ + 8 moteurs IA</span>
+              </div>
+              <h4 className="text-base font-black text-white">
+                Formez votre collaborateur IA et contrôlez chaque promesse commerciale
+              </h4>
+              <p className="text-xs text-zinc-400 max-w-2xl">
+                Importez vos tarifs FCFA, zones couvertes et règles de remise, puis testez Fiko en simulation avant toute mise en production.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              <button
+                onClick={() => {
+                  if (onOpenKnowledgeCenter) {
+                    onOpenKnowledgeCenter();
+                  } else {
+                    setActiveTab('marketplace');
+                  }
+                }}
+                className="px-4 py-2.5 rounded-xl bg-[#E10600] hover:bg-red-700 text-white text-xs font-black transition cursor-pointer whitespace-nowrap"
+              >
+                Ouvrir Knowledge Center™
+              </button>
+              <button
+                onClick={() => setActiveTab('marketplace')}
+                className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs font-bold transition cursor-pointer whitespace-nowrap"
+              >
+                Onglet Connaissances &amp; Agents
+              </button>
+            </div>
+          </div>
+
           {/* FIKO COMMAND CENTER PRIMARY COUNTERS - 5 SECONDS COMPREHENSION */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             
             <div className="bg-[#0a0a0f] border border-gray-900 p-5 rounded-2xl flex flex-col justify-between shadow-xl relative overflow-hidden group">
               <div className="absolute top-0 right-0 w-16 h-16 bg-blue-500/5 rounded-full blur-xl"></div>
               <div>
-                <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider block mb-1">CA GÉNERÉ AUJOURD'HUI</span>
-                <p className="text-xl font-mono font-black text-white">{revenueToday.toLocaleString()} F</p>
+                <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider block mb-1">CA GÉNÉRÉ AUJOURD'HUI</span>
+                <p className="text-xl font-mono font-black text-white">{formatMoney(revenueToday)}</p>
+                {!isBaseFcfa && (
+                  <p className="text-[10px] font-mono text-zinc-500 mt-0.5">{formatFcfa(revenueToday)}</p>
+                )}
               </div>
               <div className="flex justify-between items-center text-[10px] text-[#25D366] font-semibold mt-4 pt-2 border-t border-gray-900/50">
                 <span>Direct Fiko Pay</span>
@@ -969,7 +981,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                   </div>
                   <div className="bg-black/40 border border-gray-900 p-3 rounded-xl">
                     <span className="text-[9px] font-bold text-gray-500 block">VOLUME FINANCIER GÉNÉRÉ</span>
-                    <strong className="text-sm font-mono text-white">+2 450 000 FCFA</strong>
+                    <strong className="text-sm font-mono text-white">+{formatMoney(2450000)}</strong>
                   </div>
                   <div className="bg-black/40 border border-gray-900 p-3 rounded-xl text-left">
                     <span className="text-[9px] font-bold text-fiko-red block uppercase">Opportunités froides</span>
@@ -980,7 +992,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                 <div className="bg-black/60 border border-red-950 p-4 rounded-xl flex items-center justify-between text-xs gap-4">
                   <div className="space-y-0.5">
                     <p className="text-gray-300 font-extrabold flex items-center gap-1">
-                      ⚠️ <strong className="text-fiko-red">{potentialRecovered.toLocaleString()} FCFA</strong> de potentiel perdu sur la table.
+                      ⚠️ <strong className="text-fiko-red">{formatMoney(potentialRecovered)}</strong> de potentiel perdu sur la table.
                     </p>
                     <p className="text-gray-400 text-[11px]">7 prospects à forte intention d'achat n'ont pas encore reçu d'interventions de relance personnalisée.</p>
                   </div>
@@ -1006,7 +1018,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                 )}
                 {revenueAiState === 'success' && (
                   <div className="bg-emerald-950/40 border border-emerald-900 text-emerald-400 p-4 rounded-xl text-center text-xs font-black">
-                    🎉 +850 000 FCFA récupérés avec succès !
+                    🎉 +{formatMoney(850000)} récupérés avec succès !
                   </div>
                 )}
 
@@ -1046,7 +1058,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
 
               <div className="h-60">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={graphData}>
+                  <AreaChart data={graphData.map((d) => ({ ...d, salesDisplay: Math.round(convertFromBase(d.sales)) }))}>
                     <defs>
                       <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#E10600" stopOpacity={0.3}/>
@@ -1056,8 +1068,11 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                     <CartesianGrid strokeDasharray="3 3" stroke="#16161c" vertical={false} />
                     <XAxis dataKey="name" stroke="#444" axisLine={false} tickLine={false} />
                     <YAxis stroke="#444" axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ backgroundColor: '#0a0a0f', border: '1px solid #1f2937' }} />
-                    <Area type="monotone" dataKey="sales" name="Ventes (FCFA)" stroke="#E10600" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0a0a0f', border: '1px solid #1f2937' }}
+                      formatter={(value: any) => [`${Number(value).toLocaleString('fr-FR')} ${currencyInfo.symbol}`, `Ventes (${currencyInfo.symbol})`]}
+                    />
+                    <Area type="monotone" dataKey="salesDisplay" name={`Ventes (${currencyInfo.symbol})`} stroke="#E10600" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -1075,14 +1090,14 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
 
                 <div className="space-y-3">
                   {[
-                    { name: 'Marie Koné', score: 95, value: '99 000 FCFA', action: 'Déclenché avec succès ✓', active: true },
-                    { name: 'Koffi Yao (Cocody)', score: 91, value: '45 000 FCFA', action: 'Relancer via WhatsApp', active: false },
-                    { name: 'Awa Diallo (Plateau)', score: 88, value: '19 900 FCFA', action: 'Relancer via WhatsApp', active: false }
+                    { name: 'Marie Koné', score: 95, amount: 99000, action: 'Déclenché avec succès ✓', active: true },
+                    { name: 'Koffi Yao (Cocody)', score: 91, amount: 45000, action: 'Relancer via WhatsApp', active: false },
+                    { name: 'Awa Diallo (Plateau)', score: 88, amount: 19900, action: 'Relancer via WhatsApp', active: false }
                   ].map((l, idx) => (
                     <div key={idx} className="bg-black/40 border border-gray-900/60 hover:border-gray-800 p-3 rounded-xl flex justify-between items-center transition-all">
                       <div>
                         <p className="text-xs font-bold text-white">{l.name}</p>
-                        <p className="text-[10px] text-gray-550">Valeur : <strong className="text-emerald-400 font-mono">{l.value}</strong> • Score {l.score}%</p>
+                        <p className="text-[10px] text-gray-550">Valeur : <strong className="text-emerald-400 font-mono">{formatMoney(l.amount)}</strong> • Score {l.score}%</p>
                       </div>
                       <button 
                         onClick={() => {
@@ -1103,7 +1118,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
 
               <div className="border-t border-gray-900 mt-4 pt-4 flex gap-1 justify-between text-[10px] text-gray-500">
                 <span>Total à débloquer :</span>
-                <span className="font-extrabold text-white">163 900 FCFA</span>
+                <span className="font-extrabold text-white font-mono">{formatMoney(163900)}</span>
               </div>
             </div>
 
@@ -1436,7 +1451,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                   </div>
                   <div className="border-l-4 border-blue-500 pl-3">
                     <span className="text-[10px] text-gray-500 uppercase font-black block">CA GLOBAL FIKO PAY</span>
-                    <strong className="text-xl font-mono text-[#25D366] tracking-tight">12 850 000 FCFA</strong>
+                    <strong className="text-xl font-mono text-[#25D366] tracking-tight">{formatMoney(12850000)}</strong>
                     <span className="text-[9px] text-gray-400 block">Débit net instantané</span>
                   </div>
                 </div>
@@ -1457,7 +1472,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
 
                   <div>
                     <span className="text-[9px] text-fiko-red uppercase font-black block">OPPORTUNITÉS PERDUES/FROIDES</span>
-                    <strong className="text-base font-mono text-fiko-red block">3 250 000 FCFA</strong>
+                    <strong className="text-base font-mono text-fiko-red block">{formatMoney(3250000)}</strong>
                     <span className="text-[9px] text-gray-400 font-sans">À récupérer via Relance J+2</span>
                   </div>
                 </div>
@@ -1713,7 +1728,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
               <div className="bg-black/60 p-4 rounded-xl border border-zinc-900 text-right min-w-[280px]">
                 <span className="text-[9px] text-gray-500 uppercase font-black block mb-1">REVENU MENSUEL RÉCURRENT (MRR) PROJETÉ</span>
                 <span className="text-2xl font-mono font-black text-[#25D366] block">
-                  {Math.round(projectedClientsCount * 0.60 * 19900 + projectedClientsCount * 0.25 * 49900 + projectedClientsCount * 0.10 * 99000 + projectedClientsCount * 0.05 * 199000).toLocaleString()} <span className="text-xs text-gray-400 font-sans">FCFA/mois</span>
+                  {formatMoney(Math.round(projectedClientsCount * 0.60 * 19900 + projectedClientsCount * 0.25 * 49900 + projectedClientsCount * 0.10 * 99000 + projectedClientsCount * 0.05 * 199000), { suffix: '/mois' })}
                 </span>
               </div>
             </div>
@@ -1727,8 +1742,8 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                     {[
                       { count: 50, label: '50 Clients (Phase 1)' },
                       { count: 100, label: '100 Clients' },
-                      { count: 500, label: '500 Clients (22M)' },
-                      { count: 2000, label: '2 000 Clients (88M)' }
+                      { count: 500, label: '500 Clients' },
+                      { count: 2000, label: '2 000 Clients' }
                     ].map((p) => (
                       <button 
                         key={p.count}
@@ -1762,56 +1777,56 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                 <div className="bg-zinc-950/60 border border-zinc-900 p-4.5 rounded-xl relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-1 bg-zinc-900/80 border-l border-b border-zinc-850 text-[8px] font-mono font-bold text-zinc-500">60% TIER</div>
                   <span className="bg-[#E10600]/10 text-[#E10650] border border-[#E10600]/20 text-[9px] font-black uppercase px-2 py-0.5 rounded">Starter</span>
-                  <p className="text-[10px] text-gray-400 mt-2">19 900 FCFA / mois</p>
+                  <p className="text-[10px] text-gray-400 mt-2">{formatMoney(19900, { suffix: ' / mois' })}</p>
                   
                   <div className="flex justify-between items-end mt-4">
                     <div>
                       <span className="text-[8px] text-gray-500 block">CLIENTS ACTIFS</span>
                       <strong className="text-lg font-mono font-black text-white">{Math.round(projectedClientsCount * 0.60)}</strong>
                     </div>
-                    <span className="text-xs font-mono font-bold text-emerald-400">{(Math.round(projectedClientsCount * 0.60) * 19900).toLocaleString()} F</span>
+                    <span className="text-xs font-mono font-bold text-emerald-400">{formatMoney(Math.round(projectedClientsCount * 0.60) * 19900)}</span>
                   </div>
                 </div>
 
                 <div className="bg-zinc-950/60 border border-zinc-900 p-4.5 rounded-xl relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-1 bg-zinc-900/80 border-l border-b border-zinc-850 text-[8px] font-mono font-bold text-zinc-500">25% TIER</div>
                   <span className="bg-blue-950/20 text-blue-400 border border-blue-900/20 text-[9px] font-black uppercase px-2 py-0.5 rounded">Business</span>
-                  <p className="text-[10px] text-gray-400 mt-2">49 900 FCFA / mois</p>
+                  <p className="text-[10px] text-gray-400 mt-2">{formatMoney(49900, { suffix: ' / mois' })}</p>
                   
                   <div className="flex justify-between items-end mt-4">
                     <div>
                       <span className="text-[8px] text-gray-500 block">CLIENTS ACTIFS</span>
                       <strong className="text-lg font-mono font-black text-white">{Math.round(projectedClientsCount * 0.25)}</strong>
                     </div>
-                    <span className="text-xs font-mono font-bold text-emerald-400">{(Math.round(projectedClientsCount * 0.25) * 49900).toLocaleString()} F</span>
+                    <span className="text-xs font-mono font-bold text-emerald-400">{formatMoney(Math.round(projectedClientsCount * 0.25) * 49900)}</span>
                   </div>
                 </div>
 
                 <div className="bg-zinc-950/60 border border-zinc-900 p-4.5 rounded-xl relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-1 bg-zinc-900/80 border-l border-b border-zinc-850 text-[8px] font-mono font-bold text-zinc-500">10% TIER</div>
                   <span className="bg-purple-950/20 text-purple-400 border border-purple-900/20 text-[9px] font-black uppercase px-2 py-0.5 rounded">Scale</span>
-                  <p className="text-[10px] text-gray-400 mt-2">99 000 FCFA / mois</p>
+                  <p className="text-[10px] text-gray-400 mt-2">{formatMoney(99000, { suffix: ' / mois' })}</p>
                   
                   <div className="flex justify-between items-end mt-4">
                     <div>
                       <span className="text-[8px] text-gray-500 block">CLIENTS ACTIFS</span>
                       <strong className="text-lg font-mono font-black text-white">{Math.round(projectedClientsCount * 0.10)}</strong>
                     </div>
-                    <span className="text-xs font-mono font-bold text-emerald-400">{(Math.round(projectedClientsCount * 0.10) * 99000).toLocaleString()} F</span>
+                    <span className="text-xs font-mono font-bold text-emerald-400">{formatMoney(Math.round(projectedClientsCount * 0.10) * 99000)}</span>
                   </div>
                 </div>
 
                 <div className="bg-zinc-950/60 border border-zinc-900 p-4.5 rounded-xl relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-1 bg-zinc-900/80 border-l border-b border-zinc-850 text-[8px] font-mono font-bold text-zinc-500">5% TIER</div>
                   <span className="bg-amber-950/20 text-amber-400 border border-amber-900/20 text-[9px] font-black uppercase px-2 py-0.5 rounded">Elite</span>
-                  <p className="text-[10px] text-gray-400 mt-2">199 000 FCFA / mois</p>
+                  <p className="text-[10px] text-gray-400 mt-2">{formatMoney(199000, { suffix: ' / mois' })}</p>
                   
                   <div className="flex justify-between items-end mt-4">
                     <div>
                       <span className="text-[8px] text-gray-500 block">CLIENTS ACTIFS</span>
                       <strong className="text-lg font-mono font-black text-white">{Math.round(projectedClientsCount * 0.05)}</strong>
                     </div>
-                    <span className="text-xs font-mono font-bold text-[#25D366]">{(Math.round(projectedClientsCount * 0.05) * 199000).toLocaleString()} F</span>
+                    <span className="text-xs font-mono font-bold text-[#25D366]">{formatMoney(Math.round(projectedClientsCount * 0.05) * 199000)}</span>
                   </div>
                 </div>
               </div>
@@ -1865,89 +1880,14 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
         </div>
       )}
 
-      {/* RENDER TAB 6: KNOWLEDGE PDF LOADER & AGENT MARKETPLACE (Previous dashboard core, preserved perfectly) */}
+      {/* RENDER TAB 6: FIKO KNOWLEDGE CENTER™ V3.0 & AGENT MARKETPLACE */}
       {activeTab === 'marketplace' && (
         <div className="space-y-6">
           
-          {/* BRAIN FAQS INDEXER */}
-          <div className="bg-[#0a0a0f] p-6 rounded-2xl border border-gray-900 shadow-xl flex flex-col justify-between relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-fiko-red/2 rounded-full blur-3xl pointer-events-none"></div>
-            <div>
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <span className="text-[#E10600] font-black text-[9px] uppercase tracking-widest bg-red-955 border border-red-900/30 px-2 py-0.5 rounded">
-                    Fiko Brain Base v2.0
-                  </span>
-                  <h3 className="text-xl font-black text-white mt-1.5 flex items-center gap-2">
-                    🧠 Base de Connaissances Active & Gestion Documentaire
-                  </h3>
-                </div>
-                <div className="text-right">
-                  <span className="text-2xl font-black text-[#25D366]">{knowledgePointCount}</span>
-                  <p className="text-[9px] text-gray-500 uppercase tracking-wider font-extrabold">Points d'information IA</p>
-                </div>
-              </div>
-
-              <p className="text-xs text-gray-400 mb-6 leading-relaxed">
-                Déposez vos grilles tarifaires, vos documents d'entreprise ou renseignez simplement l'URL de votre boutique en ligne. Votre agent Fiko analyse et modélise instantanément l'intégralité du contenu pour des réponses parfaites à vos prospects 24h/24.
-              </p>
-
-              {/* Existing Documents List */}
-              <div className="space-y-2 mb-6">
-                <span className="text-[10px] text-gray-500 tracking-wider font-bold uppercase block mb-1">Sources de connaissances synchronisées :</span>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {brainFiles.map((file, idx) => (
-                    <div key={idx} className="bg-black/60 p-3 rounded-xl border border-gray-900 flex items-center justify-between gap-2.5">
-                      <div className="flex items-center gap-2 bg-transparent overflow-hidden">
-                        {file.name.includes('CIV') || file.name.includes('pdf') || file.name.includes('.txt') ? (
-                          <FileText className="text-blue-400 shrink-0" size={16} />
-                        ) : (
-                          <Globe className="text-[#25D366] shrink-0" size={16} />
-                        )}
-                        <div className="text-left overflow-hidden">
-                          <p className="text-xs font-bold text-gray-200 truncate">{file.name}</p>
-                          <p className="text-[9px] text-gray-500">{file.size}</p>
-                        </div>
-                      </div>
-                      <Check className="text-[#25D366] shrink-0" size={14} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Upload Input and Crawl Action Bar */}
-            <div className="border-t border-gray-950 pt-5 mt-4 space-y-4">
-              <div className="flex flex-col sm:flex-row gap-4 items-center">
-                {/* Fake Crawlers web */}
-                <div className="relative w-full flex-1">
-                  <input 
-                    type="text" 
-                    placeholder="https://votre-boutique.ci/produits" 
-                    value={newUrl}
-                    onChange={(e) => setNewUrl(e.target.value)}
-                    className="w-full bg-black border border-gray-900 rounded-xl p-3 text-xs focus:outline-none focus:border-fiko-red text-white placeholder:text-gray-700"
-                  />
-                  <button 
-                onClick={handleParseWeblinkSim}
-                disabled={indexingSystem || !newUrl}
-                className="absolute right-2 top-1.5 bg-fiko-red text-white py-1.5 px-4 rounded-lg font-bold text-[10px] hover:bg-red-700 transition disabled:opacity-50"
-                  >
-                Scanner l'URL 🌐
-                  </button>
-                </div>
-
-                {/* Document upload simulation */}
-                <button 
-                  onClick={handleFileUploadSim}
-                  disabled={indexingSystem}
-                  className="w-full sm:w-auto shrink-0 bg-gray-900 hover:bg-gray-850 border border-gray-800 text-white font-extrabold px-5 py-3 rounded-xl text-xs flex items-center justify-center gap-2 transition active:scale-95 disabled:opacity-50"
-                >
-                  {indexingSystem ? "Traitement avec l'IA..." : "Uploader PDF / Doc (CIV) 📂"}
-                </button>
-              </div>
-            </div>
-          </div>
+          <KnowledgeCenter
+            onboardingData={onboardingData}
+            isDemoMode={isDemoMode || !!onboardingData?.reviewMode}
+          />
 
           {/* FIKO MARKETPLACE COMMERCIAUX */}
           <div className="bg-[#0a0a0f] p-6 md:p-8 rounded-2xl border border-gray-900 shadow-lg relative">
@@ -2020,15 +1960,15 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
               <div className="bg-black/80 rounded-xl p-3 border border-gray-900 space-y-2.5 text-xs mb-4">
                 <div className="flex justify-between items-center text-gray-300">
                   <span>1 Parrainage option <strong>Starter</strong> :</span>
-                  <span className="text-[#25D366] font-extrabold">5 000 FCFA / mois</span>
+                  <span className="text-[#25D366] font-extrabold font-mono">{formatMoney(5000, { suffix: ' / mois' })}</span>
                 </div>
                 <div className="flex justify-between items-center text-gray-300">
                   <span>1 Parrainage option <strong>Business</strong> :</span>
-                  <span className="text-[#25D366] font-extrabold">10 000 FCFA / mois</span>
+                  <span className="text-[#25D366] font-extrabold font-mono">{formatMoney(10000, { suffix: ' / mois' })}</span>
                 </div>
                 <div className="flex justify-between items-center text-gray-300">
                   <span>1 Parrainage option <strong>Elite</strong> :</span>
-                  <span className="text-yellow-500 font-extrabold">25 000 FCFA / mois</span>
+                  <span className="text-yellow-500 font-extrabold font-mono">{formatMoney(25000, { suffix: ' / mois' })}</span>
                 </div>
               </div>
             </div>
@@ -2170,7 +2110,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                   <p className="text-[11px] text-gray-440 leading-snug">Vendez l'accès aux benchmarks sectoriels et rapports de conversion exclusifs à vos clients locaux.</p>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-white font-mono font-black text-xs">29 900 FCFA / mois</span>
+                  <span className="text-white font-mono font-black text-xs">{formatMoney(29900, { suffix: ' / mois' })}</span>
                   <button className="bg-purple-700 text-white px-4 py-2 rounded-lg font-black text-xs hover:bg-purple-850 transition shadow-[0_4px_10px_rgba(147,51,234,0.3)]">
                     Souscrire
                   </button>
@@ -2241,7 +2181,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
               
               <div className="bg-zinc-950 border border-zinc-900 p-3.5 rounded-xl text-right shrink-0">
                 <span className="text-[9px] text-gray-550 uppercase font-black block font-mono">COMMISSIONS DE RECOMMANDATION VERSÉES</span>
-                <strong className="text-lg font-mono text-emerald-400 block mt-0.5">{partnerReferralAmount.toLocaleString()} FCFA</strong>
+                <strong className="text-lg font-mono text-emerald-400 block mt-0.5">{formatMoney(partnerReferralAmount)}</strong>
                 <button 
                   onClick={() => {
                     alert("Félicitations Koffmann ! Vos commissions accumulées ont été créditées par Wave sur votre compte principal.");
@@ -2296,7 +2236,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                       <div className="space-y-1.5 pt-2">
                         <span className="text-[9px] text-gray-500 uppercase font-bold block">{opp.client}</span>
                         <h5 className="text-xs font-black text-white leading-relaxed">{opp.need}</h5>
-                        <p className="text-[11px] text-gray-400">Budget estimé : <strong className="text-white font-mono">{opp.revenue.toLocaleString()} FCFA</strong></p>
+                        <p className="text-[11px] text-gray-400">Budget estimé : <strong className="text-white font-mono">{formatMoney(opp.revenue)}</strong></p>
                       </div>
 
                       <div className="space-y-2 border-t border-zinc-950 pt-2 text-xs">
@@ -2381,10 +2321,10 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                 {/* List of Partners with interactive Trust Score */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {[
-                    { name: "Kamara Digital Agence", location: "Cocody, Abidjan 🇨🇮", rating: "⭐ 4.90", trustScore: 97, reviews: "98/100", responseTime: "12s", revenueSimulated: "12 400 000 FCFA", nps: 98, seniority: "14 mois", level: "Accredited Agency", category: "agency", services: "Campagnes de pubs Meta & Cohérence sémantique de l'IA", contacts: "contact@kamara.ci", desc: "Leader de l'implémentation de fiko_closer en Côte d'Ivoire. Aide les PME e-commerce à clore en moins de 10 min." },
-                    { name: "Yao Koffi (Consultant Certifié)", location: "Dakar, Sénégal 🇸🇳", rating: "⭐ 4.85", trustScore: 94, reviews: "96/100", responseTime: "18s", revenueSimulated: "8 700 000 FCFA", nps: 94, seniority: "9 mois", level: "Certified Expert", category: "expert_crm", services: "Interconnections API, fiko_brain et fiko_memory complexes", contacts: "koffi@fiko-partner.net", desc: "Expert en branchements Salesforce / HubSpot ouest-africains avec le CRM augmenté de Fiko pour vos clients." },
-                    { name: "Fatou Diatta (Growth Marketer)", location: "Yoff, Thiaroye 🇸🇳", rating: "⭐ 4.95", trustScore: 98, reviews: "99/100", responseTime: "11s", revenueSimulated: "15 200 000 FCFA", nps: 99, seniority: "18 mois", level: "Certified Trainer", category: "expert_ia", services: "Création de FAQ sémantiques et de scripts locaux", contacts: "fatou@growtheast.com", desc: "Ancienne consultante Orange Sénégal. Spécialisée dans la tonalité wolof et nouchi hyper-locale de l'IA." },
-                    { name: "Bamba Tech Integrations", location: "Douala, Cameroun 🇨🇲", rating: "⭐ 4.75", trustScore: 89, reviews: "93/100", responseTime: "24s", revenueSimulated: "4 100 000 FCFA", nps: 91, seniority: "6 mois", level: "Accredited Integrator", category: "integrateur", services: "Déploiement physique Fiko, Onboarding de commerciaux", contacts: "bamba@bambatech.cm", desc: "Formateurs certifiés pour les équipes de vente terrain. Assure une maîtrise complète de Fiko Pay." }
+                    { name: "Kamara Digital Agence", location: "Cocody, Abidjan 🇨🇮", rating: "⭐ 4.90", trustScore: 97, reviews: "98/100", responseTime: "12s", revenueSimulated: 12400000, nps: 98, seniority: "14 mois", level: "Accredited Agency", category: "agency", services: "Campagnes de pubs Meta & Cohérence sémantique de l'IA", contacts: "contact@kamara.ci", desc: "Leader de l'implémentation de fiko_closer en Côte d'Ivoire. Aide les PME e-commerce à clore en moins de 10 min." },
+                    { name: "Yao Koffi (Consultant Certifié)", location: "Dakar, Sénégal 🇸🇳", rating: "⭐ 4.85", trustScore: 94, reviews: "96/100", responseTime: "18s", revenueSimulated: 8700000, nps: 94, seniority: "9 mois", level: "Certified Expert", category: "expert_crm", services: "Interconnections API, fiko_brain et fiko_memory complexes", contacts: "koffi@fiko-partner.net", desc: "Expert en branchements Salesforce / HubSpot ouest-africains avec le CRM augmenté de Fiko pour vos clients." },
+                    { name: "Fatou Diatta (Growth Marketer)", location: "Yoff, Thiaroye 🇸🇳", rating: "⭐ 4.95", trustScore: 98, reviews: "99/100", responseTime: "11s", revenueSimulated: 15200000, nps: 99, seniority: "18 mois", level: "Certified Trainer", category: "expert_ia", services: "Création de FAQ sémantiques et de scripts locaux", contacts: "fatou@growtheast.com", desc: "Ancienne consultante Orange Sénégal. Spécialisée dans la tonalité wolof et nouchi hyper-locale de l'IA." },
+                    { name: "Bamba Tech Integrations", location: "Douala, Cameroun 🇨🇲", rating: "⭐ 4.75", trustScore: 89, reviews: "93/100", responseTime: "24s", revenueSimulated: 4100000, nps: 91, seniority: "6 mois", level: "Accredited Integrator", category: "integrateur", services: "Déploiement physique Fiko, Onboarding de commerciaux", contacts: "bamba@bambatech.cm", desc: "Formateurs certifiés pour les équipes de vente terrain. Assure une maîtrise complète de Fiko Pay." }
                   ]
                     .filter(p => selectedPartnerCategory === 'all' || p.category === selectedPartnerCategory)
                     .filter(p => !partnerFilterQuery || p.name.toLowerCase().includes(partnerFilterQuery.toLowerCase()) || p.services.toLowerCase().includes(partnerFilterQuery.toLowerCase()) || p.location.toLowerCase().includes(partnerFilterQuery.toLowerCase()))
@@ -2443,7 +2383,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                                 </div>
                                 <div className="bg-black/40 p-1.5 rounded border border-zinc-900 flex justify-between col-span-2">
                                   <span className="text-gray-400">💰 Volume d'Affaires Généré :</span>
-                                  <span className="font-mono text-emerald-400 font-bold">{p.revenueSimulated}</span>
+                                  <span className="font-mono text-emerald-400 font-bold">{formatMoney(p.revenueSimulated)}</span>
                                 </div>
                                 <div className="bg-black/40 p-1.5 rounded border border-zinc-900 flex justify-between">
                                   <span className="text-gray-400">🔥 Score NPS :</span>
@@ -2615,9 +2555,9 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                       <span className="text-[9px] text-zinc-500 uppercase font-black block">Choisissez votre accréditation :</span>
                       
                       {[
-                        { type: 'expert', label: '🎓 Certified Expert', desc: 'Individuel — Intégration Fiko Brain & FAQ sémantiques', price: '99 900 FCFA / an' },
-                        { type: 'agency', label: '🏦 Certified Agency', desc: 'Agences — Growth hacking, campagnes & CRM', price: '199 900 FCFA / an' },
-                        { type: 'trainer', label: '🎤 Certified Trainer', desc: 'Coachs — Formations d\'équipes commerciales physiques', price: '99 900 FCFA / an' }
+                        { type: 'expert', label: '🎓 Certified Expert', desc: 'Individuel — Intégration Fiko Brain & FAQ sémantiques', price: formatMoney(99900, { suffix: ' / an' }) },
+                        { type: 'agency', label: '🏦 Certified Agency', desc: 'Agences — Growth hacking, campagnes & CRM', price: formatMoney(199900, { suffix: ' / an' }) },
+                        { type: 'trainer', label: '🎤 Certified Trainer', desc: 'Coachs — Formations d\'équipes commerciales physiques', price: formatMoney(99900, { suffix: ' / an' }) }
                       ].map((c) => (
                         <button
                           key={c.type}
@@ -2635,7 +2575,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
 
                     <div className="bg-[#111] p-3 rounded-xl border border-zinc-900 text-[10px] text-yellow-500 font-sans space-y-1">
                       <p><strong>💡 Examen Théorique Requis :</strong></p>
-                      <p className="text-gray-400 leading-relaxed">Score minimum de 80% requis sur 3 questions sémantiques basées sur l'index de connaissances. Renouvellement à 49 900 FCFA/an.</p>
+                      <p className="text-gray-400 leading-relaxed">Score minimum de 80% requis sur 3 questions sémantiques basées sur l'index de connaissances. Renouvellement à {formatMoney(49900, { suffix: '/an' })}.</p>
                     </div>
 
                     <button
@@ -2803,7 +2743,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
               </div>
               <div className="bg-black/60 border border-zinc-900 p-2.5 rounded-lg text-center min-w-28">
                 <span className="text-[8px] text-gray-500 uppercase block font-mono">Certification</span>
-                <span className="text-xs font-mono text-white font-extrabold">99 900 FCFA / an</span>
+                <span className="text-xs font-mono text-white font-extrabold">{formatMoney(99900, { suffix: ' / an' })}</span>
               </div>
             </div>
           </div>
@@ -2915,7 +2855,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                     <div className="bg-black border border-zinc-900 px-4 py-2.5 rounded-xl text-right shrink-0">
                       <span className="text-[9px] text-gray-500 uppercase block font-black font-mono">ARR ANNUEL PROJETÉ (Fiko OS)</span>
                       <span className="text-lg font-mono font-black text-[#25D366]">
-                        {computedARR.toLocaleString()} FCFA/an
+                        {formatMoney(computedARR, { suffix: '/an' })}
                       </span>
                     </div>
                   </div>
@@ -2925,7 +2865,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                     <div className="bg-black/60 p-3 rounded-xl border border-zinc-900 space-y-1">
                       <span className="text-[9px] text-gray-500 uppercase font-bold block">MRR (Mensuel)</span>
                       <p className="text-base font-mono font-black text-white">
-                        {computedMRR.toLocaleString()} F
+                        {formatMoney(computedMRR)}
                       </p>
                       <div className="text-[9px] text-gray-400 font-mono italic">Sur {projectedClientsCount} PMEs actives</div>
                     </div>
@@ -2933,7 +2873,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                     <div className="bg-black/60 p-3 rounded-xl border border-zinc-900 space-y-1">
                       <span className="text-[9px] text-gray-500 uppercase font-bold block">ARR (Annuel)</span>
                       <p className="text-base font-mono font-black text-white">
-                        {computedARR.toLocaleString()} F
+                        {formatMoney(computedARR)}
                       </p>
                       <div className="text-[9px] text-[#25D366] font-mono">Run-rate valorisé</div>
                     </div>
@@ -2941,7 +2881,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                     <div className="bg-black/60 p-3 rounded-xl border border-zinc-900 space-y-1">
                       <span className="text-[9px] text-gray-500 uppercase font-bold block">Coût d'Acquisition (CAC)</span>
                       <p className="text-base font-mono font-black text-amber-500">
-                        {boardCac.toLocaleString()} F
+                        {formatMoney(boardCac)}
                       </p>
                       <div className="text-[9px] text-gray-500 font-mono">Délai : {paybackPeriodMonths} mois</div>
                     </div>
@@ -2949,7 +2889,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                     <div className="bg-black/60 p-3 rounded-xl border border-zinc-900 space-y-1">
                       <span className="text-[9px] text-gray-500 uppercase font-bold block">Customer Lifetime Value</span>
                       <p className="text-base font-mono font-black text-fiko-red">
-                        {dynamicLTV.toLocaleString()} F
+                        {formatMoney(dynamicLTV)}
                       </p>
                       <div className="text-[9px] text-gray-500 font-mono">Par PME connectée</div>
                     </div>
@@ -2974,7 +2914,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                     <div className="bg-black/60 p-3 rounded-xl border border-zinc-900 space-y-1">
                       <span className="text-[9px] text-purple-400 uppercase font-bold block">Expansion (Insights)</span>
                       <p className="text-base font-mono font-black text-purple-300">
-                        {expansionRevenueMRR.toLocaleString()} F
+                        {formatMoney(expansionRevenueMRR)}
                       </p>
                       <div className="text-[9px] text-gray-500 font-mono">Adoption: {fikoInsightsAddonPercent}%</div>
                     </div>
@@ -3026,7 +2966,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                     <div className="space-y-2">
                       <div className="flex justify-between items-center text-xs">
                         <label className="text-gray-300 font-bold">CAC (Coût d'Acquisition) :</label>
-                        <span className="text-white font-mono font-black">{boardCac.toLocaleString()} FCFA</span>
+                        <span className="text-white font-mono font-black">{formatMoney(boardCac)}</span>
                       </div>
                       <input 
                         type="range" 
@@ -3104,7 +3044,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                         onChange={(e) => setFikoInsightsAddonPercent(parseInt(e.target.value))}
                         className="w-full accent-purple-500 h-1.5 bg-black rounded"
                       />
-                      <span className="text-[9px] text-gray-500 block leading-tight">Taux d'adoption du module premium de benchmark sectoriel (+29 900 F/mois).</span>
+                      <span className="text-[9px] text-gray-500 block leading-tight">Taux d'adoption du module premium de benchmark sectoriel (+{formatMoney(29900, { suffix: '/mois' })}).</span>
                     </div>
                   </div>
                 </>
@@ -3513,7 +3453,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
                       <p className="text-[11px] text-gray-305 leading-snug">Vendez l'accès aux benchmarks et rapports de tendances exclusifs.</p>
                     </div>
                     <span className="bg-purple-900/40 text-purple-300 font-mono font-black border border-purple-800 text-[10px] px-2.5 py-1 rounded shrink-0">
-                      29 900 FCFA / mois
+                      {formatMoney(29900, { suffix: ' / mois' })}
                     </span>
                   </div>
                 </div>
@@ -3534,7 +3474,7 @@ export default function Dashboard({ onboardingData, onUpgrade }: DashboardProps)
             </span>
             <h3 className="text-2xl font-black text-white font-sans">⚡ Prochaine Etape : Fiko Voice AI WhatsApp</h3>
             <p className="text-xs text-gray-400 max-w-2xl leading-relaxed">
-              Nous concevons la formule sans compromis à <strong>499 000 FCFA / mois</strong> pour les leaders (KCG, Banques, Compagnies de Transport). Elle déploiera des serveurs vocaux IA capables de parler et de s'entretenir avec vos clients sous forme de synthèse vocale fluide en nouchi et wolof vernaculaire, ainsi qu'un agent technique humain VIP pour le monitoring.
+              Nous concevons la formule sans compromis à <strong>{formatMoney(499000, { suffix: ' / mois' })}</strong> pour les leaders (KCG, Banques, Compagnies de Transport). Elle déploiera des serveurs vocaux IA capables de parler et de s'entretenir avec vos clients sous forme de synthèse vocale fluide en nouchi et wolof vernaculaire, ainsi qu'un agent technique humain VIP pour le monitoring.
             </p>
           </div>
           <div className="bg-black/60 border border-purple-900/60 p-4 rounded-xl text-center shrink-0 w-full md:w-auto font-mono text-xs text-purple-400 flex items-center gap-3">

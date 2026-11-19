@@ -23,6 +23,7 @@ import {
   AreaChart, 
   Area 
 } from 'recharts';
+import { useCurrency } from '../lib/currency';
 
 const monthlyLeadsData = [
   { month: 'Jan', automated: 120, total: 180, rev: 890000 },
@@ -42,6 +43,12 @@ const funnelSteps = [
 
 export default function AnalyticsModule() {
   const [activeRange, setActiveRange] = useState<'7d' | '30d' | 'all'>('30d');
+  const { currencyInfo, convertFromBase, formatMoney } = useCurrency();
+  const convertedChartData = monthlyLeadsData.map((d) => ({
+    ...d,
+    revDisplay: Math.round(convertFromBase(d.rev)),
+    revFcfa: d.rev,
+  }));
 
   return (
     <div className="space-y-6 animate-in fade-in duration-700 pb-12">
@@ -129,7 +136,7 @@ export default function AnalyticsModule() {
 
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={monthlyLeadsData}>
+              <AreaChart data={convertedChartData}>
                 <defs>
                   <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#E10600" stopOpacity={0.4}/>
@@ -139,8 +146,16 @@ export default function AnalyticsModule() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#161616" vertical={false} />
                 <XAxis dataKey="month" stroke="#444" axisLine={false} tickLine={false} />
                 <YAxis stroke="#444" axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ backgroundColor: '#050505', border: '1px solid #1f2937' }} />
-                <Area type="monotone" dataKey="rev" name="Revenus (FCFA)" stroke="#E10600" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#050505', border: '1px solid #1f2937' }}
+                  formatter={(value: any, name: string) => {
+                    if (name.startsWith('Revenus')) {
+                      return [`${Number(value).toLocaleString('fr-FR')} ${currencyInfo.symbol}`, `Revenus (${currencyInfo.symbol})`];
+                    }
+                    return [value, name];
+                  }}
+                />
+                <Area type="monotone" dataKey="revDisplay" name={`Revenus (${currencyInfo.symbol})`} stroke="#E10600" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
                 <Bar dataKey="automated" name="Leads Automatisés" fill="#1b93f3" radius={[4, 4, 0, 0]} />
               </AreaChart>
             </ResponsiveContainer>

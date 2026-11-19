@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   AlertCircle
 } from 'lucide-react';
+import { useCurrency } from '../lib/currency';
 
 interface SaaSGrowthEngineProps {
   onboardingData?: any;
@@ -24,6 +25,7 @@ interface SaaSGrowthEngineProps {
 }
 
 export default function SaaSGrowthEngine({ onboardingData, onUpgrade }: SaaSGrowthEngineProps) {
+  const { formatMoney } = useCurrency();
   // 1. Success Meter States
   const [successSteps, setSuccessSteps] = useState([
     { id: 'wa', label: 'WhatsApp Connecté', weight: 20, done: true, desc: 'Liaison instantanée de votre numéro de vente' },
@@ -244,7 +246,7 @@ export default function SaaSGrowthEngine({ onboardingData, onUpgrade }: SaaSGrow
                 </div>
                 <div>
                   <span className="text-[10px] text-zinc-500 block uppercase font-bold">Pipeline Estimé</span>
-                  <strong className="text-xs text-emerald-400">245 000 FCFA Détectés</strong>
+                  <strong className="text-xs text-emerald-400">{formatMoney(245000)} Détectés</strong>
                 </div>
               </div>
 
@@ -388,7 +390,7 @@ export default function SaaSGrowthEngine({ onboardingData, onUpgrade }: SaaSGrow
             </button>
             <div className="flex justify-between items-center text-[10px] px-1 text-zinc-400 font-mono">
               <span>Sans engagement</span>
-              <span>19 900 FCFA / mois</span>
+              <span>{formatMoney(19900, { suffix: ' / mois' })}</span>
             </div>
           </div>
         </div>

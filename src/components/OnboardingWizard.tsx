@@ -23,12 +23,14 @@ import {
   Zap,
   HelpCircle
 } from 'lucide-react';
+import { useCurrency } from '../lib/currency';
 
 interface OnboardingWizardProps {
   onComplete: (onboardingData: any) => void;
 }
 
 export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
+  const { formatMoney } = useCurrency();
   const [step, setStep] = useState<'plan' | 'connect-mode' | 'qr-connect' | 'api-connect' | 'questions' | 'build-engine'>('plan');
   
   // Onboarding states
@@ -174,7 +176,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                     <span className="text-[#25D366] bg-emerald-500/10 p-1 rounded"><QrCode size={12} /></span>
                   </div>
                   <h3 className="text-xl font-black mb-1">ESSAI GRATUIT</h3>
-                  <div className="text-2xl font-black text-emerald-400 mb-1">0 FCFA</div>
+                  <div className="text-2xl font-black text-emerald-400 mb-1">{formatMoney(0)}</div>
                   <p className="text-gray-400 text-[11px] mb-3 leading-tight">Découvrez la puissance de Fiko pendant 7 jours.</p>
                   
                   <div className="space-y-1.5 pt-3 border-t border-gray-900 text-[11px] text-gray-300">
@@ -205,7 +207,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                     <span className="text-[#25D366] bg-green-500/10 p-1 rounded"><QrCode size={12} /></span>
                   </div>
                   <h3 className="text-xl font-black mb-1">STARTER</h3>
-                  <div className="text-2xl font-black text-white mb-1">19 900 FCFA</div>
+                  <div className="text-2xl font-black text-white mb-1">{formatMoney(19900)}</div>
                   <p className="text-gray-400 text-[11px] mb-3 leading-tight">Votre premier commercial IA opérationnel.</p>
                   
                   <div className="space-y-1.5 pt-3 border-t border-gray-900 text-[11px] text-gray-300">
@@ -240,7 +242,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                     <span className="text-blue-500 bg-blue-500/10 p-1 rounded"><Facebook size={12} /></span>
                   </div>
                   <h3 className="text-xl font-black mb-1">BUSINESS</h3>
-                  <div className="text-2xl font-black text-blue-400 mb-1">49 900 FCFA</div>
+                  <div className="text-2xl font-black text-blue-400 mb-1">{formatMoney(49900)}</div>
                   <p className="text-gray-300 text-[11px] mb-3 leading-tight font-medium">Pour entreprises en pleine croissance.</p>
                   
                   <div className="space-y-1.5 pt-3 border-t border-gray-900 text-[11px] text-gray-300">
@@ -271,7 +273,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                     <span className="text-purple-500 bg-purple-500/10 p-1 rounded"><Building2 size={12} /></span>
                   </div>
                   <h3 className="text-xl font-black mb-1">SCALE</h3>
-                  <div className="text-2xl font-black text-purple-400 mb-1">99 000 FCFA</div>
+                  <div className="text-2xl font-black text-purple-400 mb-1">{formatMoney(99000)}</div>
                   <p className="text-gray-400 text-[11px] mb-3 leading-tight">Pour équipes et ventes intensives.</p>
                   
                   <div className="space-y-1.5 pt-3 border-t border-gray-900 text-[11px] text-gray-300">
@@ -306,7 +308,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                     <span className="text-amber-500 bg-amber-500/10 p-1 rounded animate-bounce"><Sparkles size={12} /></span>
                   </div>
                   <h3 className="text-xl font-black mb-1">ELITE</h3>
-                  <div className="text-2xl font-black text-amber-400 mb-1">199 000 FCFA</div>
+                  <div className="text-2xl font-black text-amber-400 mb-1">{formatMoney(199000)}</div>
                   <p className="text-amber-300/80 text-[10px] mb-3 leading-tight font-bold">Un employé digital autonome 24h/24.</p>
                   
                   <div className="space-y-1.5 pt-3 border-t border-amber-950 text-[10px] text-gray-300">

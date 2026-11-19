@@ -3,6 +3,7 @@ import { Megaphone, Users, Plus, Upload, CheckCircle2, TrendingUp, Search, Calen
 import Papa from 'papaparse';
 import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp, getDocs, orderBy, query } from 'firebase/firestore';
+import { useCurrency } from '../lib/currency';
 
 // Types
 interface Contact {
@@ -60,9 +61,17 @@ export default function CampaignsModule() {
 }
 
 function BroadcastDashboard() {
-  // Mock analytics
+  const { formatMoney, formatFcfa, isBaseFcfa } = useCurrency();
+  const baseRevenueFcfa = 81666500;
+
   const kpis = [
-    { label: 'Revenus Générés', value: '124,500 €', icon: DollarSign, color: 'text-emerald-500' },
+    {
+      label: 'Revenus Générés',
+      value: formatMoney(baseRevenueFcfa),
+      sub: !isBaseFcfa ? `Base : ${formatFcfa(baseRevenueFcfa)}` : undefined,
+      icon: DollarSign,
+      color: 'text-emerald-500'
+    },
     { label: 'ROI Moyen', value: '342%', icon: TrendingUp, color: 'text-blue-500' },
     { label: 'Taux Conversion', value: '14.8%', icon: Target, color: 'text-fiko-red' },
     { label: 'Taux Ouverture', value: '87.4%', icon: Activity, color: 'text-purple-500' },
@@ -70,7 +79,7 @@ function BroadcastDashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         {kpis.map((kpi, i) => (
           <div key={i} className="bg-[#0a0a0a] p-6 rounded-2xl border border-gray-800">
             <div className="flex items-center gap-3 mb-4">
@@ -79,7 +88,8 @@ function BroadcastDashboard() {
               </div>
               <h3 className="text-gray-400 font-semibold">{kpi.label}</h3>
             </div>
-            <p className="text-3xl font-bold">{kpi.value}</p>
+            <p className="text-2xl lg:text-3xl font-bold font-mono">{kpi.value}</p>
+            {kpi.sub && <p className="text-[11px] font-mono text-zinc-500 mt-1">{kpi.sub}</p>}
           </div>
         ))}
       </div>
